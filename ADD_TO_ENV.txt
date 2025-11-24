@@ -1,0 +1,4 @@
+# ⚠️ WICHTIG: Füge diese Zeile zu deiner .env Datei hinzu!
+
+ELEVENLABS_AGENT_ID=agent_2101kab7rs5tefesz0gm66418aw1
+
