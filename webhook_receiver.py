@@ -100,7 +100,7 @@ def fetch_questionnaire_context(campaign_id: int) -> dict:
     """
     try:
         headers = {
-            "Authorization": f"Bearer {Config.HIRINGS_API_TOKEN}",
+            "Authorization": Config.HIRINGS_API_TOKEN,  # ⚠️ OHNE "Bearer" - HOC API benötigt direkten Token!
             "Content-Type": "application/json"
         }
         
@@ -191,87 +191,87 @@ def build_questionnaire_context(questionnaire: dict, company_name: str, first_na
     Erstellt Questionnaire-Kontext als formatierten Text
     
     Args:
-        questionnaire: Questionnaire-Daten aus HOC
+        questionnaire: Questionnaire-Daten aus HOC (enthält 'questions' Array)
         company_name: Firmenname
         first_name: Vorname Kandidat
         last_name: Nachname Kandidat
         
     Returns:
-        Questionnaire-Kontext als formatierter Text
+        Questionnaire-Kontext als formatierter Text mit Fragen
     """
     
-    # KONTEXT: Questionnaire-Daten formatieren
+    # KONTEXT: Basis-Informationen
     questionnaire_context = f"""
 ===================================
-KONTEXT AUS QUESTIONNAIRE (Campaign-ID: {questionnaire.get('id', 'N/A')}):
+KONTEXT AUS QUESTIONNAIRE:
 ===================================
 
 Kandidat: {first_name} {last_name}
 Firma: {company_name}
 """
     
-    if questionnaire:
-        if questionnaire.get('title'):
-            questionnaire_context += f"\nKampagne: {questionnaire['title']}"
+    if questionnaire and questionnaire.get('questions'):
+        questions = questionnaire['questions']
         
-        if questionnaire.get('position'):
-            questionnaire_context += f"\nPosition: {questionnaire['position']}"
+        # Gruppiere Fragen nach Kategorien
+        questions_by_category = {}
+        for q in questions:
+            if isinstance(q, dict):
+                category = q.get('category', 'general')
+                group = q.get('group', 'Allgemein')
+                
+                if category not in questions_by_category:
+                    questions_by_category[category] = {
+                        'group': group,
+                        'questions': []
+                    }
+                
+                questions_by_category[category]['questions'].append(q)
         
-        if questionnaire.get('department'):
-            questionnaire_context += f"\nAbteilung: {questionnaire['department']}"
+        # Formatiere Fragen nach Kategorien
+        questionnaire_context += f"\n\n📋 FRAGEN ZU KLÄREN ({len(questions)} insgesamt):\n"
+        questionnaire_context += "="*50
         
-        # Unternehmensinformationen
-        if questionnaire.get('company_size'):
-            questionnaire_context += f"\nMitarbeiterzahl: {questionnaire['company_size']}"
+        # Sortiere nach category_order wenn vorhanden
+        sorted_categories = sorted(
+            questions_by_category.items(),
+            key=lambda x: x[1]['questions'][0].get('category_order', 99) if x[1]['questions'] else 99
+        )
         
-        if questionnaire.get('company_pitch'):
-            questionnaire_context += f"\nUnternehmensbeschreibung: {questionnaire['company_pitch']}"
-        
-        if questionnaire.get('company_priorities'):
-            questionnaire_context += f"\nAktuelle Prioritäten: {questionnaire['company_priorities']}"
-        
-        if questionnaire.get('description'):
-            questionnaire_context += f"\n\nStellenbeschreibung:\n{questionnaire['description']}"
-        
-        if questionnaire.get('job_requirements'):
-            questionnaire_context += f"\n\nAnforderungen:\n{questionnaire['job_requirements']}"
-        
-        if questionnaire.get('work_location') or questionnaire.get('office_address'):
-            location = questionnaire.get('work_location') or questionnaire.get('office_address')
-            questionnaire_context += f"\n\nArbeitsplatz-Standort: {location}"
-        
-        if questionnaire.get('work_location_postal_code'):
-            questionnaire_context += f"\nPostleitzahl des Arbeitsplatzes: {questionnaire['work_location_postal_code']}"
-        
-        if questionnaire.get('campaignlocation_label'):
-            questionnaire_context += f"\nStandort-Label: {questionnaire['campaignlocation_label']}"
-        
-        if questionnaire.get('questions'):
-            questionnaire_context += "\n\nRelevante Fragen aus Questionnaire:"
-            for i, q in enumerate(questionnaire['questions'], 1):
-                if isinstance(q, dict):
-                    questionnaire_context += f"\n{i}. {q.get('question_text', q.get('text', str(q)))}"
-                else:
-                    questionnaire_context += f"\n{i}. {q}"
-        
-        if questionnaire.get('key_qualifications'):
-            questionnaire_context += f"\n\nSchlüssel-Qualifikationen:\n{questionnaire['key_qualifications']}"
-        
-        if questionnaire.get('company_benefits'):
-            questionnaire_context += f"\n\nUnternehmensvorteile:\n{questionnaire['company_benefits']}"
-        
-        if questionnaire.get('conversation_goals'):
-            questionnaire_context += f"\n\nGesprächsziele:\n{questionnaire['conversation_goals']}"
-        
-        # Falls es ein komplettes JSON-Objekt ist, zeige wichtige Felder
-        if questionnaire.get('data'):
-            data = questionnaire['data']
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    if key not in ['id', 'created_at', 'updated_at']:
-                        questionnaire_context += f"\n{key}: {value}"
+        for category, data in sorted_categories:
+            group_name = data['group']
+            category_questions = data['questions']
+            
+            questionnaire_context += f"\n\n🔹 {group_name.upper()}:"
+            
+            # Sortiere Fragen nach Priority (1 = wichtig, 2 = optional)
+            must_questions = [q for q in category_questions if q.get('priority') == 1]
+            optional_questions = [q for q in category_questions if q.get('priority') == 2]
+            
+            if must_questions:
+                questionnaire_context += f"\n\n  ⚠️  MUSS-KRITERIEN:"
+                for q in must_questions:
+                    question_text = q.get('question', '')
+                    context = q.get('context', '')
+                    preamble = q.get('preamble', '')
+                    
+                    questionnaire_context += f"\n  • {question_text}"
+                    if context:
+                        questionnaire_context += f"\n    (Kontext: {context})"
+                    if preamble:
+                        questionnaire_context += f"\n    (Überleitung: {preamble})"
+            
+            if optional_questions:
+                questionnaire_context += f"\n\n  ℹ️  ZUSÄTZLICHE FRAGEN:"
+                for q in optional_questions:
+                    question_text = q.get('question', '')
+                    preamble = q.get('preamble', '')
+                    
+                    questionnaire_context += f"\n  • {question_text}"
+                    if preamble:
+                        questionnaire_context += f"\n    (Überleitung: {preamble})"
     
-    questionnaire_context += "\n===================================\n"
+    questionnaire_context += "\n\n===================================\n"
     
     logger.info(f"📝 Questionnaire-Kontext erstellt: {len(questionnaire_context)} Zeichen")
     

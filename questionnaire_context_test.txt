@@ -1,0 +1,52 @@
+
+===================================
+KONTEXT AUS QUESTIONNAIRE:
+===================================
+
+Kandidat: Max Mustermann
+Firma: Urban Kita gGmbH
+
+
+📋 FRAGEN ZU KLÄREN (12 insgesamt):
+==================================================
+
+🔹 QUALIFIKATION:
+
+  ⚠️  MUSS-KRITERIEN:
+  • Haben Sie: Deutschkenntnisse B2?
+    (Kontext: Muss-Kriterium: Deutschkenntnisse B2)
+  • Haben Sie: mehrjährige Berufserfahrung?
+    (Kontext: Muss-Kriterium: mehrjährige Berufserfahrung)
+  • Haben Sie: staatlich anerkannter Abschluss in einem sozialpädagogischen Beruf?
+    (Kontext: Muss-Kriterium: staatlich anerkannter Abschluss in einem sozialpädagogischen Beruf)
+  • Verfügen Sie über einen staatlich anerkannten Abschluss in einem sozialpädagogischen Beruf?
+
+🔹 RAHMEN:
+
+  ℹ️  ZUSÄTZLICHE FRAGEN:
+  • Die Stelle ist in Vollzeit (39 Wochenstunden). Ist das für Sie passend?
+    (Überleitung: Ich möchte kurz auf das Arbeitszeitmodell eingehen.)
+  • Können Sie Vollzeit mit 39 Wochenstunden arbeiten?
+    (Überleitung: Ich würde nun gerne zum Arbeitszeitmodell kommen.)
+
+🔹 STANDORT:
+
+  ⚠️  MUSS-KRITERIEN:
+  • Unser Standort ist Kita Springmäuse, Stollberger Straße 25 - 27, 12627 Berlin. Passt das für Sie?
+
+🔹 QUALIFIKATION:
+
+  ℹ️  ZUSÄTZLICHE FRAGEN:
+  • Würden Sie Erfahrung in einer leitenden Stelle als wünschenswert beschreiben?
+
+🔹 QUALIFIKATION:
+
+  ⚠️  MUSS-KRITERIEN:
+  • Haben Sie mehrjährige Berufserfahrung?
+  • Verfügen Sie über Deutschkenntnisse auf dem Niveau B2?
+
+  ℹ️  ZUSÄTZLICHE FRAGEN:
+  • Ist die Vergütung nach Haustarif des TV-L Berlin für Sie akzeptabel?
+  • Können Sie einschlägige Fortbildungen oder Qualifizierungen nachweisen?
+
+===================================
