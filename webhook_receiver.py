@@ -123,10 +123,9 @@ def fetch_questionnaire_context(campaign_id: int) -> dict:
         return {}
 
 
-def build_enhanced_prompt(questionnaire: dict, company_name: str, first_name: str, last_name: str) -> str:
+def build_questionnaire_context(questionnaire: dict, company_name: str, first_name: str, last_name: str) -> str:
     """
-    Erstellt erweiterten System-Prompt mit Questionnaire-Kontext
-    Nutzt den Dashboard-Prompt als Basis und ergänzt ihn mit Kontext
+    Erstellt Questionnaire-Kontext als Text für Dynamic Variable
     
     Args:
         questionnaire: Questionnaire-Daten aus HOC
@@ -135,31 +134,11 @@ def build_enhanced_prompt(questionnaire: dict, company_name: str, first_name: st
         last_name: Nachname Kandidat
         
     Returns:
-        Erweiterter System-Prompt
+        Questionnaire-Kontext als formatierter Text
     """
     
-    # Lade Dashboard-Prompt aus Datei
-    try:
-        with open('dashboard_prompt.txt', 'r', encoding='utf-8') as f:
-            dashboard_prompt = f.read()
-        logger.info("✅ Dashboard-Prompt aus Datei geladen")
-    except FileNotFoundError:
-        logger.warning("⚠️  dashboard_prompt.txt nicht gefunden, nutze Basis-Prompt")
-        dashboard_prompt = f"""Du bist ein professioneller Recruiting-Assistent für {company_name}.
-Du führst ein Gespräch mit {first_name} {last_name}."""
-    
-    # Ersetze Platzhalter im Dashboard-Prompt
-    dashboard_prompt = dashboard_prompt.replace('{{companyname}}', company_name)
-    dashboard_prompt = dashboard_prompt.replace('{{candidatefirst_name}}', first_name)
-    dashboard_prompt = dashboard_prompt.replace('{{candidatelast_name}}', last_name)
-    
-    # Ersetze weitere Platzhalter falls vorhanden (aus dynamic_variables)
-    # Diese werden später im override_agent_settings gesetzt
-    # Hier nur die Basis-Platzhalter ersetzen
-    
-    # KONTEXT: Questionnaire-Daten hinzufügen
+    # KONTEXT: Questionnaire-Daten formatieren
     questionnaire_context = f"""
-
 ===================================
 KONTEXT AUS QUESTIONNAIRE (Campaign-ID: {questionnaire.get('id', 'N/A')}):
 ===================================
@@ -218,14 +197,9 @@ Firma: {company_name}
     
     questionnaire_context += "\n===================================\n"
     
-    # FINALER PROMPT: Dashboard-Prompt + Questionnaire-Kontext
-    # Die spezifischen Fragen (Wohnort, Arbeitsweg, Tätigkeiten, Weiterbildung) 
-    # sind jetzt direkt im dashboard_prompt.txt integriert
-    final_prompt = dashboard_prompt + questionnaire_context
+    logger.info(f"📝 Questionnaire-Kontext erstellt: {len(questionnaire_context)} Zeichen")
     
-    logger.info(f"📝 Prompt erstellt: {len(final_prompt)} Zeichen (Dashboard: {len(dashboard_prompt)}, Kontext: {len(questionnaire_context)})")
-    
-    return final_prompt
+    return questionnaire_context
 
 
 @app.route('/webhook/trigger-call', methods=['POST'])
@@ -320,15 +294,15 @@ def trigger_outbound_call():
         if not questionnaire:
             logger.warning(f"⚠️  Kein Questionnaire gefunden, fahre mit Basis-Prompt fort")
         
-        # 2. Baue erweiterten Prompt mit Questionnaire-Kontext
-        enhanced_prompt = build_enhanced_prompt(
+        # 2. Baue Questionnaire-Kontext für Dynamic Variable
+        questionnaire_context = build_questionnaire_context(
             questionnaire=questionnaire,
             company_name=company_name,
             first_name=first_name,
             last_name=last_name
         )
         
-        logger.info(f"📝 Prompt erstellt: {len(enhanced_prompt)} Zeichen")
+        logger.info(f"📝 Questionnaire-Kontext erstellt: {len(questionnaire_context)} Zeichen")
         
         # 3. Bereite Dynamic Variables vor
         # WICHTIG: Diese Variablen werden im Dashboard-Prompt verwendet!
@@ -338,6 +312,10 @@ def trigger_outbound_call():
             "candidatefirst_name": first_name,
             "candidatelast_name": last_name,
             "campaign_id": str(campaign_id),
+            
+            # NEU: Questionnaire-Kontext als Dynamic Variable
+            # Wird im Dashboard-Prompt mit {{questionnaire_context}} verwendet
+            "questionnaire_context": questionnaire_context,
             
             # Variablen aus Questionnaire (werden im Prompt verwendet)
             "companysize": questionnaire.get('companysize', '') or questionnaire.get('company_size', '') or questionnaire.get('employee_count', ''),
@@ -371,6 +349,7 @@ def trigger_outbound_call():
             "candidatefirst_name": first_name,
             "candidatelast_name": last_name,
             "campaignlocation_label": campaign_location,  # Wird im Prompt verwendet - muss vorhanden sein!
+            "questionnaire_context": questionnaire_context,  # NEU: Fragebogen-Kontext immer übergeben
         }
         
         # Füge erforderliche Variablen hinzu (auch wenn leer)
@@ -388,66 +367,26 @@ def trigger_outbound_call():
         logger.info(f"📋 Dynamic Variables ({len(dynamic_variables)}): {list(dynamic_variables.keys())}")
         logger.info(f"📋 Basis-Variablen: companyname={dynamic_variables.get('companyname', 'N/A')}, candidatefirst_name={dynamic_variables.get('candidatefirst_name', 'N/A')}, candidatelast_name={dynamic_variables.get('candidatelast_name', 'N/A')}")
         
-        # 4. Erstelle Conversation mit Dynamic Variables und generiere Link
-        logger.info(f"\n🔗 Erstelle Conversation mit Dynamic Variables...")
+        # 4. Generiere WebRTC Conversation Link mit Dynamic Variables
+        logger.info(f"\n🔗 Generiere WebRTC Conversation Link mit Dynamic Variables...")
         logger.info(f"📋 Variablen: {list(dynamic_variables.keys())}")
         
-        try:
-            # Versuche eine Conversation mit Variablen zu erstellen
-            # Nutze get_signed_url mit conversation_initiation_client_data
-            resp = client.conversational_ai.conversations.get_signed_url(
-                agent_id=Config.ELEVENLABS_AGENT_ID,
-                conversation_initiation_client_data=dynamic_variables  # ← Variablen übergeben!
-            )
-            
-            # Parse Response
-            signed_url_str = str(resp)
-            
-            # Extrahiere URL aus Response
-            if hasattr(resp, 'url'):
-                conversation_link = resp.url
-                conversation_id = "signed-url"
-            elif hasattr(resp, 'conversation_id'):
-                conversation_id = resp.conversation_id
-                # Konstruiere Link mit Conversation ID
-                conversation_link = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}&conversation_id={conversation_id}"
-            else:
-                # Fallback: Versuche URL aus String zu extrahieren
-                import re
-                # Suche nach URL im Response
-                url_match = re.search(r"url=['\"]?([^'\"]+)['\"]?", signed_url_str)
-                if url_match:
-                    conversation_link = url_match.group(1)
-                    conversation_id = "signed-url"
-                else:
-                    # Fallback zu statischem Link mit Query-Parametern
-                    logger.warning("⚠️  Konnte URL nicht aus Response extrahieren, nutze Fallback")
-                    base_url = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}"
-                    if dynamic_variables:
-                        query_params = urlencode(dynamic_variables)
-                        conversation_link = f"{base_url}&{query_params}"
-                    else:
-                        conversation_link = base_url
-                    conversation_id = "public-link-fallback"
-            
-            logger.info(f"✅ Conversation mit Variablen erstellt!")
-            logger.info(f"🔗 Link: {conversation_link}")
-            
-        except Exception as e:
-            logger.warning(f"⚠️  Fehler beim Erstellen der Conversation mit Variablen: {e}")
-            logger.info("🔄 Fallback: Nutze statischen Link mit Query-Parametern")
-            
-            # Fallback: Statischer Link mit Query-Parametern
-            base_url = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}"
-            if dynamic_variables:
-                query_params = urlencode(dynamic_variables)
-                conversation_link = f"{base_url}&{query_params}"
-            else:
-                conversation_link = base_url
-            
-            conversation_id = "public-link-fallback"
-            logger.info(f"🔗 Fallback-Link: {conversation_link}")
+        # WICHTIG: Dynamic Variables müssen im ElevenLabs Dashboard konfiguriert sein!
+        # Die Variablen werden als Query-Parameter übergeben
+        base_url = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}"
         
+        # Füge Dynamic Variables als Query-Parameter hinzu
+        if dynamic_variables:
+            # URL-encode die Variablen
+            query_params = urlencode(dynamic_variables)
+            conversation_link = f"{base_url}&{query_params}"
+        else:
+            conversation_link = base_url
+        
+        conversation_id = "public-link-with-vars"
+        
+        logger.info(f"✅ Conversation Link mit Variablen generiert!")
+        logger.info(f"🔗 Link: {conversation_link[:200]}...")
         logger.info(f"{'='*70}\n")
         
         # Response zurück an HOC mit Link
