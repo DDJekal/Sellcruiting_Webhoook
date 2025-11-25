@@ -496,7 +496,7 @@ def trigger_outbound_call():
                     agent_id=Config.ELEVENLABS_AGENT_ID
                 )
                 
-                signed_url = getattr(signed_result, 'url', None)
+                signed_url = signed_result.signed_url  # ✅ Korrektes Attribut!
                 
                 if signed_url:
                     logger.info(f"✅ WebRTC Link erstellt!")
