@@ -512,12 +512,13 @@ def trigger_outbound_call():
                 
                 # Füge Dynamic Variables als URL-Parameter hinzu
                 # Diese füllen die {{variables}} im Dashboard-Prompt
+                # WICHTIG: Variablennamen OHNE Unterstriche (wie in ElevenLabs Dashboard)
                 dynamic_vars = {
                     'agent_id': Config.ELEVENLABS_AGENT_ID,
                     'conversation_signature': conversation_signature,
-                    'candidate_first_name': first_name,
-                    'candidate_last_name': last_name,
-                    'company_name': company_name,
+                    'candidatefirst_name': first_name,      # Ohne Unterstrich!
+                    'candidatelast_name': last_name,        # Ohne Unterstrich!
+                    'companyname': company_name,            # Ohne Unterstrich!
                     'questionnaire_context': questionnaire_context  # Vollständiger Kontext
                 }
                 
@@ -529,9 +530,9 @@ def trigger_outbound_call():
                 logger.info(f"📊 Dynamic Variables gefüllt:")
                 logger.info(f"   • agent_id: {Config.ELEVENLABS_AGENT_ID}")
                 logger.info(f"   • conversation_signature: {conversation_signature[:40]}...")
-                logger.info(f"   • candidate_first_name: {first_name}")
-                logger.info(f"   • candidate_last_name: {last_name}")
-                logger.info(f"   • company_name: {company_name}")
+                logger.info(f"   • candidatefirst_name: {first_name}")
+                logger.info(f"   • candidatelast_name: {last_name}")
+                logger.info(f"   • companyname: {company_name}")
                 logger.info(f"   • questionnaire_context: {len(questionnaire_context)} Zeichen")
                 logger.info(f"🔗 Browser URL: {browser_url[:100]}...")
                 logger.info(f"📏 URL-Länge: {len(browser_url)} Zeichen")
