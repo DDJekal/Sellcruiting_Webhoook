@@ -282,7 +282,11 @@ Firma: {company_name}
 @require_api_key
 def trigger_outbound_call():
     """
-    Webhook Endpoint: Empfängt Call-Request von HOC und startet Outbound Call
+    Webhook Endpoint: Empfängt Call-Request von HOC
+    
+    Intelligenter Fallback:
+    - Wenn to_number vorhanden → Outbound SIP Trunk Call (Twilio)
+    - Wenn to_number fehlt → WebRTC Link erstellen (Browser-basiert)
     
     Erwartet JSON:
     {
@@ -290,8 +294,8 @@ def trigger_outbound_call():
         "company_name": "Tech Startup GmbH",
         "candidate_first_name": "Max",
         "candidate_last_name": "Mustermann",
-        "to_number": "+491234567890",
-        "agent_phone_number_id": "phnum_4901ka8wj2cjexfvpwwhnp9v94t9" (optional)
+        "to_number": "+491234567890" (optional - falls fehlt: WebRTC Link),
+        "agent_phone_number_id": "phnum_xxx..." (nur für SIP Trunk)
     }
     """
     try:
@@ -330,7 +334,7 @@ def trigger_outbound_call():
         
         # Validiere erforderliche Felder
         required_fields = ['campaign_id', 'company_name', 'candidate_first_name', 
-                          'candidate_last_name', 'to_number']
+                          'candidate_last_name']  # to_number ist jetzt OPTIONAL!
         
         missing_fields = [field for field in required_fields if not data.get(field)]
         
@@ -345,26 +349,32 @@ def trigger_outbound_call():
         company_name = data['company_name']
         first_name = data['candidate_first_name']
         last_name = data['candidate_last_name']
-        to_number = data['to_number']
+        to_number = data.get('to_number')  # OPTIONAL!
         agent_phone_number_id = data.get('agent_phone_number_id', Config.ELEVENLABS_AGENT_PHONE_NUMBER_ID)
         override_prompt = data.get('override_prompt')
         
-        # Validiere agent_phone_number_id
-        if not agent_phone_number_id:
+        # Validiere agent_phone_number_id nur wenn to_number vorhanden
+        if to_number and not agent_phone_number_id:
             return jsonify({
                 "error": "Missing agent_phone_number_id",
                 "message": "Provide agent_phone_number_id in request or set ELEVENLABS_AGENT_PHONE_NUMBER_ID in environment"
             }), 400
         
         logger.info(f"\n{'='*70}")
-        logger.info(f"📞 NEUE CALL-ANFRAGE VON HOC (SIP TRUNK)")
+        if to_number:
+            logger.info(f"📞 NEUE CALL-ANFRAGE VON HOC (SIP TRUNK)")
+        else:
+            logger.info(f"🔗 NEUE LINK-ANFRAGE VON HOC (WEBRTC)")
         logger.info(f"{'='*70}")
         logger.info(f"⏰ Zeit: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"📋 Campaign-ID: {campaign_id}")
         logger.info(f"👤 Kandidat: {first_name} {last_name}")
         logger.info(f"🏢 Firma: {company_name}")
-        logger.info(f"📞 Nummer: {to_number}")
-        logger.info(f"📱 Phone Number ID: {agent_phone_number_id}")
+        if to_number:
+            logger.info(f"📞 Nummer: {to_number}")
+            logger.info(f"📱 Phone Number ID: {agent_phone_number_id}")
+        else:
+            logger.info(f"🔗 Methode: WebRTC Link (kein to_number)")
         
         # 1. Hole Questionnaire aus HOC
         logger.info(f"\n🔄 Lade Questionnaire für Campaign {campaign_id}...")
@@ -399,66 +409,163 @@ def trigger_outbound_call():
         logger.info(f"📝 Enhanced Prompt: {len(enhanced_prompt)} Zeichen")
         logger.info(f"💬 First Message: {first_message}")
         
-        # 4. Starte Outbound Call mit conversation_config_override
-        logger.info(f"\n{'='*70}")
-        logger.info(f"📞 STARTE OUTBOUND CALL (SIP TRUNK mit Twilio)")
-        logger.info(f"{'='*70}")
+        # =================================================================
+        # INTELLIGENTER FALLBACK: SIP Trunk vs. WebRTC Link
+        # =================================================================
         
-        try:
-            # Erstelle ConversationInitiationClientDataRequestInput mit conversation_config_override
-            client_data = ConversationInitiationClientDataRequestInput(
-                conversation_config_override={
-                    "agent": {
-                        "prompt": {
-                            "prompt": enhanced_prompt  # ← Überschreibt Dashboard-Prompt!
-                        },
-                        "first_message": first_message  # ← Überschreibt Dashboard First Message!
+        if to_number:
+            # 📞 OPTION A: SIP TRUNK OUTBOUND CALL (Twilio)
+            logger.info(f"\n{'='*70}")
+            logger.info(f"📞 STARTE OUTBOUND CALL (SIP TRUNK mit Twilio)")
+            logger.info(f"{'='*70}")
+            
+            try:
+                # Erstelle ConversationInitiationClientDataRequestInput mit conversation_config_override
+                client_data = ConversationInitiationClientDataRequestInput(
+                    conversation_config_override={
+                        "agent": {
+                            "prompt": {
+                                "prompt": enhanced_prompt  # ← Überschreibt Dashboard-Prompt!
+                            },
+                            "first_message": first_message  # ← Überschreibt Dashboard First Message!
+                        }
                     }
+                )
+                
+                response = client.conversational_ai.sip_trunk.outbound_call(
+                    agent_id=Config.ELEVENLABS_AGENT_ID,
+                    to_number=to_number,
+                    agent_phone_number_id=agent_phone_number_id,
+                    conversation_initiation_client_data=client_data
+                )
+                
+                # Parse Response
+                conversation_id = getattr(response, 'conversation_id', 'unknown')
+                call_status = getattr(response, 'status', 'initiated')
+                
+                logger.info(f"✅ Call erfolgreich gestartet!")
+                logger.info(f"📞 Conversation ID: {conversation_id}")
+                logger.info(f"📊 Status: {call_status}")
+                logger.info(f"{'='*70}\n")
+                
+                # Response zurück an HOC
+                return jsonify({
+                    "status": "success",
+                    "method": "sip_trunk_call",
+                    "message": "Outbound call initiated successfully",
+                    "data": {
+                        "campaign_id": campaign_id,
+                        "candidate": f"{first_name} {last_name}",
+                        "company": company_name,
+                        "to_number": to_number,
+                        "conversation_id": conversation_id,
+                        "call_status": call_status,
+                        "questionnaire_loaded": bool(questionnaire),
+                        "timestamp": datetime.now().isoformat(),
+                        "prompt_length": len(enhanced_prompt),
+                        "first_message": first_message
+                    }
+                }), 200
+                
+            except Exception as api_error:
+                logger.error(f"❌ ElevenLabs API Error: {api_error}", exc_info=True)
+                return jsonify({
+                    "status": "error",
+                    "error": "API call failed",
+                    "message": str(api_error),
+                    "timestamp": datetime.now().isoformat()
+                }), 500
+        
+        else:
+            # 🔗 OPTION B: WEBRTC LINK (Fallback)
+            logger.info(f"\n{'='*70}")
+            logger.info(f"🔗 ERSTELLE WEBRTC LINK (Kein to_number vorhanden)")
+            logger.info(f"{'='*70}")
+            
+            try:
+                # Erstelle Conversation mit conversation_config_override
+                client_data = ConversationInitiationClientDataRequestInput(
+                    conversation_config_override={
+                        "agent": {
+                            "prompt": {
+                                "prompt": enhanced_prompt
+                            },
+                            "first_message": first_message
+                        }
+                    }
+                )
+                
+                conv = client.conversational_ai.conversations.create(
+                    agent_id=Config.ELEVENLABS_AGENT_ID,
+                    conversation_initiation_client_data=client_data
+                )
+                
+                conversation_id = getattr(conv, 'id', getattr(conv, 'conversation_id', None))
+                
+                # Versuche Signed URL zu bekommen
+                if hasattr(client.conversational_ai.conversations, 'get_signed_url'):
+                    signed_result = client.conversational_ai.conversations.get_signed_url(conversation_id=conversation_id)
+                    signed_url = getattr(signed_result, 'url', signed_result)
+                    
+                    logger.info(f"✅ WebRTC Link erstellt!")
+                    logger.info(f"💬 Conversation ID: {conversation_id}")
+                    logger.info(f"🔗 Signed URL: {signed_url[:80]}...")
+                    logger.info(f"{'='*70}\n")
+                    
+                    return jsonify({
+                        "status": "success",
+                        "method": "webrtc_link",
+                        "message": "WebRTC link created successfully",
+                        "data": {
+                            "campaign_id": campaign_id,
+                            "candidate": f"{first_name} {last_name}",
+                            "company": company_name,
+                            "conversation_id": conversation_id,
+                            "signed_url": signed_url,
+                            "questionnaire_loaded": bool(questionnaire),
+                            "timestamp": datetime.now().isoformat(),
+                            "prompt_length": len(enhanced_prompt),
+                            "first_message": first_message
+                        }
+                    }), 200
+                else:
+                    raise AttributeError('get_signed_url not available')
+                    
+            except Exception as api_error:
+                logger.error(f"❌ WebRTC Link Error: {api_error}", exc_info=True)
+                
+                # Fallback: Erstelle URL mit Query-Parametern
+                logger.warning("⚠️  Fallback: Erstelle URL mit Query-Parametern")
+                
+                questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
+                params = {
+                    'agent_id': Config.ELEVENLABS_AGENT_ID,
+                    'companyname': company_name,
+                    'candidatefirst_name': first_name,
+                    'candidatelast_name': last_name,
+                    'questionnaire_context': questionnaire_context[:500]  # Begrenzt wg. URL-Länge
                 }
-            )
-            
-            response = client.conversational_ai.sip_trunk.outbound_call(
-                agent_id=Config.ELEVENLABS_AGENT_ID,
-                to_number=to_number,
-                agent_phone_number_id=agent_phone_number_id,
-                conversation_initiation_client_data=client_data
-            )
-            
-            # Parse Response
-            conversation_id = getattr(response, 'conversation_id', 'unknown')
-            call_status = getattr(response, 'status', 'initiated')
-            
-            logger.info(f"✅ Call erfolgreich gestartet!")
-            logger.info(f"📞 Conversation ID: {conversation_id}")
-            logger.info(f"📊 Status: {call_status}")
-            logger.info(f"{'='*70}\n")
-            
-            # Response zurück an HOC
-            return jsonify({
-                "status": "success",
-                "message": "Outbound call initiated successfully",
-                "data": {
-                    "campaign_id": campaign_id,
-                    "candidate": f"{first_name} {last_name}",
-                    "company": company_name,
-                    "to_number": to_number,
-                    "conversation_id": conversation_id,
-                    "call_status": call_status,
-                    "questionnaire_loaded": bool(questionnaire),
-                    "timestamp": datetime.now().isoformat(),
-                    "prompt_length": len(enhanced_prompt),
-                    "first_message": first_message
-                }
-            }), 200
-            
-        except Exception as api_error:
-            logger.error(f"❌ ElevenLabs API Error: {api_error}", exc_info=True)
-            return jsonify({
-                "status": "error",
-                "error": "API call failed",
-                "message": str(api_error),
-                "timestamp": datetime.now().isoformat()
-            }), 500
+                signed_url = f"https://eu.residency.elevenlabs.io/app/talk-to?{urlencode(params)}"
+                
+                logger.info(f"✅ Fallback URL erstellt")
+                logger.info(f"🔗 URL: {signed_url[:80]}...")
+                logger.info(f"{'='*70}\n")
+                
+                return jsonify({
+                    "status": "success",
+                    "method": "webrtc_link_fallback",
+                    "message": "WebRTC link created (fallback mode)",
+                    "data": {
+                        "campaign_id": campaign_id,
+                        "candidate": f"{first_name} {last_name}",
+                        "company": company_name,
+                        "conversation_id": None,
+                        "signed_url": signed_url,
+                        "questionnaire_loaded": bool(questionnaire),
+                        "timestamp": datetime.now().isoformat(),
+                        "fallback": True
+                    }
+                }), 200
         
     except Exception as e:
         logger.error(f"❌ Fehler beim Call: {e}", exc_info=True)
