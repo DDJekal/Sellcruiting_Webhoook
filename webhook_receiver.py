@@ -361,29 +361,93 @@ def trigger_outbound_call():
             "company_benefits": questionnaire.get('company_benefits', ''),
         }
         
-        # Entferne leere Werte (nur nicht-leere Variablen senden)
-        dynamic_variables = {k: v for k, v in dynamic_variables.items() if v}
+        # Extrahiere campaignlocation_label für required_vars (wird im Prompt verwendet!)
+        campaign_location = dynamic_variables.get('campaignlocation_label', '')
         
-        logger.info(f"📋 Dynamic Variables: {list(dynamic_variables.keys())}")
+        # WICHTIG: Basis-Variablen müssen IMMER vorhanden sein (auch wenn leer)
+        # Diese werden im Dashboard-Prompt verwendet und müssen übergeben werden
+        required_vars = {
+            "companyname": company_name,
+            "candidatefirst_name": first_name,
+            "candidatelast_name": last_name,
+            "campaignlocation_label": campaign_location,  # Wird im Prompt verwendet - muss vorhanden sein!
+        }
         
-        # 4. Generiere WebRTC Conversation Link mit Dynamic Variables
-        logger.info(f"\n🔗 Generiere WebRTC Conversation Link...")
+        # Füge erforderliche Variablen hinzu (auch wenn leer)
+        for key, value in required_vars.items():
+            dynamic_variables[key] = value
         
-        # Öffentlicher "Talk To Agent" Link mit Dynamic Variables als Query-Parameter
-        base_url = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}"
+        # Entferne leere Werte NUR für optionale Variablen (nicht für Basis-Variablen)
+        # Basis-Variablen bleiben immer erhalten
+        optional_vars = set(dynamic_variables.keys()) - set(required_vars.keys())
+        dynamic_variables = {
+            k: v for k, v in dynamic_variables.items() 
+            if k in required_vars or (k in optional_vars and v)
+        }
         
-        # Füge Dynamic Variables als Query-Parameter hinzu
-        if dynamic_variables:
-            # URL-encode die Variablen
-            query_params = urlencode(dynamic_variables)
-            conversation_link = f"{base_url}&{query_params}"
-        else:
-            conversation_link = base_url
+        logger.info(f"📋 Dynamic Variables ({len(dynamic_variables)}): {list(dynamic_variables.keys())}")
+        logger.info(f"📋 Basis-Variablen: companyname={dynamic_variables.get('companyname', 'N/A')}, candidatefirst_name={dynamic_variables.get('candidatefirst_name', 'N/A')}, candidatelast_name={dynamic_variables.get('candidatelast_name', 'N/A')}")
         
-        conversation_id = "public-link"
+        # 4. Erstelle Conversation mit Dynamic Variables und generiere Link
+        logger.info(f"\n🔗 Erstelle Conversation mit Dynamic Variables...")
+        logger.info(f"📋 Variablen: {list(dynamic_variables.keys())}")
         
-        logger.info(f"✅ Conversation Link generiert!")
-        logger.info(f"🔗 Link: {conversation_link}")
+        try:
+            # Versuche eine Conversation mit Variablen zu erstellen
+            # Nutze get_signed_url mit conversation_initiation_client_data
+            resp = client.conversational_ai.conversations.get_signed_url(
+                agent_id=Config.ELEVENLABS_AGENT_ID,
+                conversation_initiation_client_data=dynamic_variables  # ← Variablen übergeben!
+            )
+            
+            # Parse Response
+            signed_url_str = str(resp)
+            
+            # Extrahiere URL aus Response
+            if hasattr(resp, 'url'):
+                conversation_link = resp.url
+                conversation_id = "signed-url"
+            elif hasattr(resp, 'conversation_id'):
+                conversation_id = resp.conversation_id
+                # Konstruiere Link mit Conversation ID
+                conversation_link = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}&conversation_id={conversation_id}"
+            else:
+                # Fallback: Versuche URL aus String zu extrahieren
+                import re
+                # Suche nach URL im Response
+                url_match = re.search(r"url=['\"]?([^'\"]+)['\"]?", signed_url_str)
+                if url_match:
+                    conversation_link = url_match.group(1)
+                    conversation_id = "signed-url"
+                else:
+                    # Fallback zu statischem Link mit Query-Parametern
+                    logger.warning("⚠️  Konnte URL nicht aus Response extrahieren, nutze Fallback")
+                    base_url = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}"
+                    if dynamic_variables:
+                        query_params = urlencode(dynamic_variables)
+                        conversation_link = f"{base_url}&{query_params}"
+                    else:
+                        conversation_link = base_url
+                    conversation_id = "public-link-fallback"
+            
+            logger.info(f"✅ Conversation mit Variablen erstellt!")
+            logger.info(f"🔗 Link: {conversation_link}")
+            
+        except Exception as e:
+            logger.warning(f"⚠️  Fehler beim Erstellen der Conversation mit Variablen: {e}")
+            logger.info("🔄 Fallback: Nutze statischen Link mit Query-Parametern")
+            
+            # Fallback: Statischer Link mit Query-Parametern
+            base_url = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}"
+            if dynamic_variables:
+                query_params = urlencode(dynamic_variables)
+                conversation_link = f"{base_url}&{query_params}"
+            else:
+                conversation_link = base_url
+            
+            conversation_id = "public-link-fallback"
+            logger.info(f"🔗 Fallback-Link: {conversation_link}")
+        
         logger.info(f"{'='*70}\n")
         
         # Response zurück an HOC mit Link
