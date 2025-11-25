@@ -212,7 +212,7 @@ def trigger_outbound_call():
         company_name = data['company_name']
         first_name = data['candidate_first_name']
         last_name = data['candidate_last_name']
-        to_number = data['to_number']
+        to_number = data.get('to_number')  # Optional für WebRTC
         agent_phone_number_id = data.get(
             'agent_phone_number_id', 
             'phnum_4801kateq1q7e61art2qbne1wgr3'  # Xelion Nummer (053138823189)
@@ -225,7 +225,10 @@ def trigger_outbound_call():
         logger.info(f"📋 Campaign-ID: {campaign_id}")
         logger.info(f"👤 Kandidat: {first_name} {last_name}")
         logger.info(f"🏢 Firma: {company_name}")
-        logger.info(f"📞 Nummer: {to_number}")
+        if to_number:
+            logger.info(f"📞 Nummer: {to_number}")
+        else:
+            logger.info(f"🔗 Modus: WebRTC Link")
         
         # 1. Hole Questionnaire aus HOC
         logger.info(f"\n🔄 Lade Questionnaire für Campaign {campaign_id}...")
@@ -259,21 +262,9 @@ def trigger_outbound_call():
         # 4. Generiere WebRTC Conversation Link
         logger.info(f"\n🔗 Generiere WebRTC Conversation Link...")
         
-        # Erstelle eine neue Conversation (WebRTC)
-        # Dynamic Variables werden als metadata übergeben
-        conversation_config = {
-            "agent_id": Config.ELEVENLABS_AGENT_ID,
-        }
-        
-        # Initiiere Conversation
-        resp = client.conversational_ai.conversations.create(
-            agent_id=Config.ELEVENLABS_AGENT_ID
-        )
-        
-        conversation_id = resp.conversation_id if hasattr(resp, 'conversation_id') else str(resp)
-        
-        # Generiere WebRTC Link
-        conversation_link = f"https://elevenlabs.io/app/conversation/{conversation_id}"
+        # Öffentlicher "Talk To Agent" Link (funktioniert ohne Login!)
+        conversation_link = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}"
+        conversation_id = "public-link"
         
         logger.info(f"✅ Conversation Link generiert!")
         logger.info(f"🔗 Link: {conversation_link}")
@@ -291,7 +282,7 @@ def trigger_outbound_call():
                 "conversation_link": conversation_link,  # ← DER LINK!
                 "questionnaire_loaded": bool(questionnaire),
                 "timestamp": datetime.now().isoformat(),
-                "note": "Kandidat kann diesen Link öffnen und im Browser mit dem Agent sprechen"
+                "note": "Kandidat kann diesen Link öffnen und im Browser mit dem Agent sprechen (ohne Login!)"
             }
         }), 200
         
