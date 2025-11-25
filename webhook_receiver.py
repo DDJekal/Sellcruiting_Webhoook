@@ -214,7 +214,7 @@ def trigger_outbound_call():
         to_number = data['to_number']
         agent_phone_number_id = data.get(
             'agent_phone_number_id', 
-            'phnum_4901ka8wj2cjexfvpwwhnp9v94t9'
+            'phnum_4801kateq1q7e61art2qbne1wgr3'  # Xelion Nummer (053138823189)
         )
         
         logger.info(f"\n{'='*70}")
