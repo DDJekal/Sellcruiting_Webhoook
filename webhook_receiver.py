@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 from flask import Flask, request, jsonify
 from elevenlabs import ElevenLabs
 from elevenlabs.environment import ElevenLabsEnvironment
+from elevenlabs.types.conversation_initiation_client_data_request_input import ConversationInitiationClientDataRequestInput
 from config import Config
 import requests
 from datetime import datetime
@@ -317,7 +318,7 @@ def trigger_outbound_call():
         
         # Validiere erforderliche Felder
         required_fields = ['campaign_id', 'company_name', 'candidate_first_name', 
-                          'candidate_last_name', 'to_number']  # to_number ist jetzt erforderlich für SIP Trunk
+                          'candidate_last_name', 'to_number']
         
         missing_fields = [field for field in required_fields if not data.get(field)]
         
@@ -332,17 +333,15 @@ def trigger_outbound_call():
         company_name = data['company_name']
         first_name = data['candidate_first_name']
         last_name = data['candidate_last_name']
-        to_number = data['to_number']  # Erforderlich für SIP Trunk
-        agent_phone_number_id = data.get(
-            'agent_phone_number_id', 
-            None  # Twilio Nummer muss konfiguriert werden
-        )
+        to_number = data['to_number']
+        agent_phone_number_id = data.get('agent_phone_number_id', Config.ELEVENLABS_AGENT_PHONE_NUMBER_ID)
+        override_prompt = data.get('override_prompt')
         
         # Validiere agent_phone_number_id
         if not agent_phone_number_id:
             return jsonify({
                 "error": "Missing agent_phone_number_id",
-                "message": "Please provide a Twilio phone number ID in the request or configure a default in the code"
+                "message": "Provide agent_phone_number_id in request or set ELEVENLABS_AGENT_PHONE_NUMBER_ID in environment"
             }), 400
         
         logger.info(f"\n{'='*70}")
@@ -363,7 +362,7 @@ def trigger_outbound_call():
             logger.warning(f"⚠️  Kein Questionnaire gefunden, fahre mit Basis-Prompt fort")
         
         # 2. Baue Enhanced Prompt mit Questionnaire-Kontext
-        enhanced_prompt = build_enhanced_prompt(
+        enhanced_prompt = override_prompt if override_prompt else build_enhanced_prompt(
             questionnaire=questionnaire,
             company_name=company_name,
             first_name=first_name,
@@ -388,22 +387,29 @@ def trigger_outbound_call():
         logger.info(f"📝 Enhanced Prompt: {len(enhanced_prompt)} Zeichen")
         logger.info(f"💬 First Message: {first_message}")
         
-        # 4. Starte Outbound Call mit agent_override
+        # 4. Starte Outbound Call mit conversation_config_override
         logger.info(f"\n{'='*70}")
         logger.info(f"📞 STARTE OUTBOUND CALL (SIP TRUNK mit Twilio)")
         logger.info(f"{'='*70}")
         
         try:
+            # Erstelle ConversationInitiationClientDataRequestInput mit conversation_config_override
+            client_data = ConversationInitiationClientDataRequestInput(
+                conversation_config_override={
+                    "agent": {
+                        "prompt": {
+                            "prompt": enhanced_prompt  # ← Überschreibt Dashboard-Prompt!
+                        },
+                        "first_message": first_message  # ← Überschreibt Dashboard First Message!
+                    }
+                }
+            )
+            
             response = client.conversational_ai.sip_trunk.outbound_call(
                 agent_id=Config.ELEVENLABS_AGENT_ID,
                 to_number=to_number,
                 agent_phone_number_id=agent_phone_number_id,
-                agent_override={
-                    "prompt": {
-                        "prompt": enhanced_prompt  # ← Überschreibt Dashboard-Prompt!
-                    },
-                    "first_message": first_message  # ← Überschreibt Dashboard First Message!
-                }
+                conversation_initiation_client_data=client_data
             )
             
             # Parse Response
@@ -463,6 +469,98 @@ def health_check():
         "timestamp": datetime.now().isoformat()
     }), 200
 
+
+@app.route('/webhook/create-webrtc-link', methods=['POST'])
+@require_api_key
+def create_webrtc_link():
+    try:
+        data = request.get_json(force=True, silent=True)
+        if not isinstance(data, dict):
+            return jsonify({
+                "error": "Invalid request format",
+                "message": "Request body must be a JSON object"
+            }), 400
+
+        required_fields = ['campaign_id', 'company_name', 'candidate_first_name', 'candidate_last_name']
+        missing = [f for f in required_fields if not data.get(f)]
+        if missing:
+            return jsonify({
+                "error": "Missing required fields",
+                "missing": missing
+            }), 400
+
+        campaign_id = int(data['campaign_id'])
+        company_name = data['company_name']
+        first_name = data['candidate_first_name']
+        last_name = data['candidate_last_name']
+        override_prompt = data.get('override_prompt')
+
+        questionnaire = fetch_questionnaire_context(campaign_id)
+        enhanced_prompt = override_prompt if override_prompt else build_enhanced_prompt(
+            questionnaire=questionnaire,
+            company_name=company_name,
+            first_name=first_name,
+            last_name=last_name
+        )
+        campaign_location = (
+            questionnaire.get('campaignlocation_label', '') or 
+            questionnaire.get('work_location', '') or 
+            questionnaire.get('location', '') or
+            (f"{questionnaire.get('work_location', '')} {questionnaire.get('work_location_postal_code', '')}".strip())
+        )
+        first_message = build_first_message(company_name, first_name, last_name, campaign_location)
+
+        try:
+            conv = client.conversational_ai.conversations.create(
+                agent_id=Config.ELEVENLABS_AGENT_ID,
+                agent_override={
+                    "prompt": {"prompt": enhanced_prompt},
+                    "first_message": first_message
+                }
+            )
+            conversation_id = getattr(conv, 'id', getattr(conv, 'conversation_id', None))
+            signed_result = None
+            if hasattr(client.conversational_ai.conversations, 'get_signed_url'):
+                signed_result = client.conversational_ai.conversations.get_signed_url(conversation_id=conversation_id)
+                signed_url = getattr(signed_result, 'url', signed_result)
+                return jsonify({
+                    "status": "success",
+                    "conversation_id": conversation_id,
+                    "signed_url": signed_url,
+                    "questionnaire_loaded": bool(questionnaire),
+                    "timestamp": datetime.now().isoformat()
+                }), 200
+            else:
+                raise AttributeError('get_signed_url not available')
+        except Exception:
+            try:
+                with open('dashboard_prompt.txt', 'r', encoding='utf-8') as f:
+                    _ = f.read()
+            except Exception:
+                pass
+            questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
+            params = {
+                'agent_id': Config.ELEVENLABS_AGENT_ID,
+                'companyname': company_name,
+                'candidatefirst_name': first_name,
+                'candidatelast_name': last_name,
+                'questionnaire_context': questionnaire_context
+            }
+            signed_url = f"https://eu.residency.elevenlabs.io/app/talk-to?{urlencode(params)}"
+            return jsonify({
+                "status": "success",
+                "conversation_id": None,
+                "signed_url": signed_url,
+                "fallback": True,
+                "questionnaire_loaded": bool(questionnaire),
+                "timestamp": datetime.now().isoformat()
+            }), 200
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
 
 @app.route('/webhook/test-questionnaire/<int:campaign_id>', methods=['GET'])
 def test_questionnaire_fetch(campaign_id):
