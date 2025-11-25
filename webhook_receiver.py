@@ -500,37 +500,13 @@ def trigger_outbound_call():
                 # Baue Questionnaire-Kontext für Dynamic Variables
                 questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
                 
-                # Extrahiere Fragen als strukturierte Liste
-                questions_list = ""
-                if questionnaire and questionnaire.get('questions'):
-                    logger.info(f"📋 Extrahiere {len(questionnaire['questions'])} Fragen für Dynamic Variables")
-                    
-                    for i, q in enumerate(questionnaire['questions'], 1):
-                        if isinstance(q, dict):
-                            question_text = q.get('question', '')
-                            priority = q.get('priority', 2)
-                            context = q.get('context', '')
-                            preamble = q.get('preamble', '')
-                            
-                            # Marker für Priorität
-                            marker = "⚠️ MUSS" if priority == 1 else "ℹ️ OPTIONAL"
-                            
-                            questions_list += f"\n{i}. [{marker}] {question_text}"
-                            
-                            if context:
-                                questions_list += f" (Kontext: {context})"
-                            if preamble:
-                                questions_list += f" (Überleitung: {preamble})"
-                
                 # Füge Dynamic Variables als URL-Parameter hinzu
                 # Diese füllen die {{variables}} im Dashboard-Prompt
                 dynamic_vars = {
                     'candidate_first_name': first_name,
                     'candidate_last_name': last_name,
                     'company_name': company_name,
-                    'campaign_id': str(campaign_id),
-                    'questionnaire_context': questionnaire_context[:1500],  # Max 1500 Zeichen
-                    'questions_list': questions_list[:1500] if questions_list else "Keine spezifischen Fragen"
+                    'questionnaire_context': questionnaire_context  # Vollständiger Kontext
                 }
                 
                 # Hänge Parameter an WebSocket URL
@@ -543,10 +519,8 @@ def trigger_outbound_call():
                 logger.info(f"   • candidate_first_name: {first_name}")
                 logger.info(f"   • candidate_last_name: {last_name}")
                 logger.info(f"   • company_name: {company_name}")
-                logger.info(f"   • campaign_id: {campaign_id}")
                 logger.info(f"   • questionnaire_context: {len(questionnaire_context)} Zeichen")
-                logger.info(f"   • questions_list: {len(questions_list)} Zeichen ({len(questionnaire.get('questions', []))} Fragen)")
-                logger.info(f"🔗 Signed URL: {base_url[:60]}...&{param_string[:40]}...")
+                logger.info(f"🔗 URL-Parameter Länge: {len(param_string)} Zeichen")
                 logger.info(f"{'='*70}\n")
                 
                 return jsonify({
