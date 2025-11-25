@@ -495,7 +495,17 @@ def trigger_outbound_call():
                     agent_id=Config.ELEVENLABS_AGENT_ID
                 )
                 
-                base_url = signed_result.signed_url
+                # WebSocket URL: wss://api.eu.residency.elevenlabs.io/v1/convai/conversation?...
+                websocket_url = signed_result.signed_url
+                
+                # Extrahiere conversation_signature aus WebSocket URL
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(websocket_url)
+                query_params = parse_qs(parsed.query)
+                conversation_signature = query_params.get('conversation_signature', [None])[0]
+                
+                if not conversation_signature:
+                    raise ValueError("Keine conversation_signature in WebSocket URL gefunden")
                 
                 # Baue Questionnaire-Kontext für Dynamic Variables
                 questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
@@ -503,40 +513,44 @@ def trigger_outbound_call():
                 # Füge Dynamic Variables als URL-Parameter hinzu
                 # Diese füllen die {{variables}} im Dashboard-Prompt
                 dynamic_vars = {
+                    'agent_id': Config.ELEVENLABS_AGENT_ID,
+                    'conversation_signature': conversation_signature,
                     'candidate_first_name': first_name,
                     'candidate_last_name': last_name,
                     'company_name': company_name,
                     'questionnaire_context': questionnaire_context  # Vollständiger Kontext
                 }
                 
-                # Hänge Parameter an WebSocket URL
-                separator = '&' if '?' in base_url else '?'
+                # Baue BROWSER-URL statt WebSocket-URL
                 param_string = urlencode(dynamic_vars)
-                signed_url = f"{base_url}{separator}{param_string}"
+                browser_url = f"https://eu.residency.elevenlabs.io/app/talk-to?{param_string}"
                 
-                logger.info(f"✅ WebRTC Link mit Dynamic Variables erstellt!")
+                logger.info(f"✅ WebRTC Browser-Link mit Dynamic Variables erstellt!")
                 logger.info(f"📊 Dynamic Variables gefüllt:")
+                logger.info(f"   • agent_id: {Config.ELEVENLABS_AGENT_ID}")
+                logger.info(f"   • conversation_signature: {conversation_signature[:40]}...")
                 logger.info(f"   • candidate_first_name: {first_name}")
                 logger.info(f"   • candidate_last_name: {last_name}")
                 logger.info(f"   • company_name: {company_name}")
                 logger.info(f"   • questionnaire_context: {len(questionnaire_context)} Zeichen")
-                logger.info(f"🔗 URL-Parameter Länge: {len(param_string)} Zeichen")
+                logger.info(f"🔗 Browser URL: {browser_url[:100]}...")
+                logger.info(f"📏 URL-Länge: {len(browser_url)} Zeichen")
                 logger.info(f"{'='*70}\n")
                 
                 return jsonify({
                     "status": "success",
-                    "method": "webrtc_link",
-                    "message": "WebRTC link created successfully with dynamic variables",
+                    "method": "webrtc_browser_link",
+                    "message": "WebRTC browser link created successfully with dynamic variables",
                     "data": {
                         "campaign_id": campaign_id,
                         "candidate": f"{first_name} {last_name}",
                         "company": company_name,
-                        "signed_url": signed_url,
+                        "browser_url": browser_url,
                         "questionnaire_loaded": bool(questionnaire),
                         "questions_count": len(questionnaire.get('questions', [])) if questionnaire else 0,
                         "timestamp": datetime.now().isoformat(),
                         "dynamic_variables_filled": list(dynamic_vars.keys()),
-                        "note": "WebRTC link uses Dashboard configuration with dynamic variables"
+                        "note": "Browser-URL can be opened directly in any web browser"
                     }
                 }), 200
                     
