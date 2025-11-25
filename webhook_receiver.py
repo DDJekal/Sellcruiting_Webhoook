@@ -6,6 +6,7 @@ Nutzt campaign_id um Questionnaire/Kontext aus HOC zu laden
 import sys
 import io
 import json
+from urllib.parse import urlencode
 from flask import Flask, request, jsonify
 from elevenlabs import ElevenLabs
 from elevenlabs.environment import ElevenLabsEnvironment
@@ -330,22 +331,55 @@ def trigger_outbound_call():
         logger.info(f"📝 Prompt erstellt: {len(enhanced_prompt)} Zeichen")
         
         # 3. Bereite Dynamic Variables vor
+        # WICHTIG: Diese Variablen werden im Dashboard-Prompt verwendet!
         dynamic_variables = {
+            # Basis-Variablen (immer vorhanden)
             "companyname": company_name,
             "candidatefirst_name": first_name,
             "candidatelast_name": last_name,
             "campaign_id": str(campaign_id),
-            # Optional: Zusätzliche Variablen aus Questionnaire
-            "position": questionnaire.get('position', ''),
+            
+            # Variablen aus Questionnaire (werden im Prompt verwendet)
+            "companysize": questionnaire.get('companysize', '') or questionnaire.get('company_size', '') or questionnaire.get('employee_count', ''),
+            "companypitch": questionnaire.get('companypitch', '') or questionnaire.get('company_pitch', '') or questionnaire.get('description', ''),
+            "companypriorities": questionnaire.get('companypriorities', '') or questionnaire.get('company_priorities', '') or questionnaire.get('priorities', ''),
+            
+            # Location (wichtig - wird im Fehler erwähnt!)
+            "campaignlocation_label": (
+                questionnaire.get('campaignlocation_label', '') or 
+                questionnaire.get('work_location', '') or 
+                questionnaire.get('location', '') or
+                (f"{questionnaire.get('work_location', '')} {questionnaire.get('work_location_postal_code', '')}".strip())
+            ),
+            
+            # Weitere Variablen
+            "position": questionnaire.get('position', '') or questionnaire.get('job_title', ''),
             "department": questionnaire.get('department', ''),
-            "campaign_title": questionnaire.get('title', '')
+            "campaign_title": questionnaire.get('title', ''),
+            "work_location": questionnaire.get('work_location', ''),
+            "work_location_postal_code": questionnaire.get('work_location_postal_code', ''),
+            "company_benefits": questionnaire.get('company_benefits', ''),
         }
         
-        # 4. Generiere WebRTC Conversation Link
+        # Entferne leere Werte (nur nicht-leere Variablen senden)
+        dynamic_variables = {k: v for k, v in dynamic_variables.items() if v}
+        
+        logger.info(f"📋 Dynamic Variables: {list(dynamic_variables.keys())}")
+        
+        # 4. Generiere WebRTC Conversation Link mit Dynamic Variables
         logger.info(f"\n🔗 Generiere WebRTC Conversation Link...")
         
-        # Öffentlicher "Talk To Agent" Link (funktioniert ohne Login!)
-        conversation_link = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}"
+        # Öffentlicher "Talk To Agent" Link mit Dynamic Variables als Query-Parameter
+        base_url = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}"
+        
+        # Füge Dynamic Variables als Query-Parameter hinzu
+        if dynamic_variables:
+            # URL-encode die Variablen
+            query_params = urlencode(dynamic_variables)
+            conversation_link = f"{base_url}&{query_params}"
+        else:
+            conversation_link = base_url
+        
         conversation_id = "public-link"
         
         logger.info(f"✅ Conversation Link generiert!")
