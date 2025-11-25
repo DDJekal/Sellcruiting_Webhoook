@@ -32,6 +32,59 @@ client = ElevenLabs(
 )
 
 
+def require_api_key(f):
+    """
+    Decorator für API Key Authentifizierung
+    Prüft Authorization Header: Bearer {API_KEY}
+    """
+    from functools import wraps
+    
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Prüfe ob API Key konfiguriert ist
+        if not Config.WEBHOOK_API_KEY:
+            logger.warning("⚠️  WEBHOOK_API_KEY nicht gesetzt - Authentifizierung deaktiviert")
+            return f(*args, **kwargs)
+        
+        # Hole Authorization Header
+        auth_header = request.headers.get('Authorization', '')
+        
+        if not auth_header:
+            logger.warning("❌ Fehlender Authorization Header")
+            return jsonify({
+                "status": "error",
+                "error": "Missing Authorization header",
+                "message": "Please provide Authorization: Bearer {API_KEY}"
+            }), 401
+        
+        # Prüfe Format: Bearer {key}
+        if not auth_header.startswith('Bearer '):
+            logger.warning("❌ Ungültiges Authorization Format")
+            return jsonify({
+                "status": "error",
+                "error": "Invalid Authorization format",
+                "message": "Use format: Authorization: Bearer {API_KEY}"
+            }), 401
+        
+        # Extrahiere API Key
+        provided_key = auth_header.replace('Bearer ', '').strip()
+        
+        # Vergleiche mit konfiguriertem Key
+        if provided_key != Config.WEBHOOK_API_KEY:
+            logger.warning(f"❌ Ungültiger API Key (von {request.remote_addr})")
+            return jsonify({
+                "status": "error",
+                "error": "Invalid API key",
+                "message": "The provided API key is invalid"
+            }), 401
+        
+        # API Key ist gültig
+        logger.info(f"✅ API Key validiert (von {request.remote_addr})")
+        return f(*args, **kwargs)
+    
+    return decorated_function
+
+
 def fetch_questionnaire_context(campaign_id: int) -> dict:
     """
     Holt Questionnaire/Kontextdatei aus HOC basierend auf Campaign-ID
@@ -174,6 +227,7 @@ Firma: {company_name}
 
 
 @app.route('/webhook/trigger-call', methods=['POST'])
+@require_api_key
 def trigger_outbound_call():
     """
     Webhook Endpoint: Empfängt Call-Request von HOC und startet Outbound Call

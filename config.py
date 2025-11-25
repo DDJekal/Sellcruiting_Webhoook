@@ -20,6 +20,9 @@ class Config:
     HIRINGS_API_URL = os.getenv("HIRINGS_API_URL")
     HIRINGS_API_TOKEN = os.getenv("HIRINGS_API_TOKEN")
     
+    # Webhook API Key (für HOC Authentifizierung)
+    WEBHOOK_API_KEY = os.getenv("WEBHOOK_API_KEY")
+    
     # ElevenLabs API URL (EU Region für Data Residency Keys)
     # Für EU Data Residency Keys muss die EU-spezifische Base URL verwendet werden
     ELEVENLABS_API_URL = "https://api.elevenlabs.io"  # SDK handled das automatisch mit dem _eu Key
