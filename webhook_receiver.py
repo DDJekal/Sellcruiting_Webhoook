@@ -490,51 +490,32 @@ def trigger_outbound_call():
             logger.info("ℹ️  WebRTC Links nutzen Dashboard-Konfiguration mit Dynamic Variables")
             
             try:
-                # Hole Signed URL von ElevenLabs
-                signed_result = client.conversational_ai.conversations.get_signed_url(
-                    agent_id=Config.ELEVENLABS_AGENT_ID
-                )
-                
-                # WebSocket URL: wss://api.eu.residency.elevenlabs.io/v1/convai/conversation?...
-                websocket_url = signed_result.signed_url
-                
-                # Extrahiere conversation_signature aus WebSocket URL
-                from urllib.parse import urlparse, parse_qs
-                parsed = urlparse(websocket_url)
-                query_params = parse_qs(parsed.query)
-                conversation_signature = query_params.get('conversation_signature', [None])[0]
-                
-                if not conversation_signature:
-                    raise ValueError("Keine conversation_signature in WebSocket URL gefunden")
-                
                 # Baue Questionnaire-Kontext für Dynamic Variables
                 questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
                 
                 # Füge Dynamic Variables als URL-Parameter hinzu
-                # Diese füllen die {{variables}} im Dashboard-Prompt
-                # WICHTIG: Variablennamen OHNE Unterstriche (wie in ElevenLabs Dashboard)
+                # WICHTIG: var_ Prefix für ElevenLabs Public Talk-to Page!
+                # Siehe: https://elevenlabs.io/docs/agents-platform/customization/personalization/dynamic-variables
                 dynamic_vars = {
                     'agent_id': Config.ELEVENLABS_AGENT_ID,
-                    'conversation_signature': conversation_signature,
-                    'candidatefirst_name': first_name,      # Ohne Unterstrich!
-                    'candidatelast_name': last_name,        # Ohne Unterstrich!
-                    'companyname': company_name,            # Ohne Unterstrich!
-                    'questionnaire_context': questionnaire_context  # Vollständiger Kontext
+                    'var_candidatefirst_name': first_name,      # var_ Prefix!
+                    'var_candidatelast_name': last_name,        # var_ Prefix!
+                    'var_companyname': company_name,            # var_ Prefix!
+                    'var_questionnaire_context': questionnaire_context  # var_ Prefix!
                 }
                 
-                # Baue BROWSER-URL statt WebSocket-URL
+                # Baue BROWSER-URL für ElevenLabs Public Talk-to Page
                 param_string = urlencode(dynamic_vars)
-                browser_url = f"https://eu.residency.elevenlabs.io/app/talk-to?{param_string}"
+                browser_url = f"https://elevenlabs.io/app/talk-to?{param_string}"
                 
                 logger.info(f"✅ WebRTC Browser-Link mit Dynamic Variables erstellt!")
-                logger.info(f"📊 Dynamic Variables gefüllt:")
+                logger.info(f"📊 Dynamic Variables gefüllt (var_ Prefix):")
                 logger.info(f"   • agent_id: {Config.ELEVENLABS_AGENT_ID}")
-                logger.info(f"   • conversation_signature: {conversation_signature[:40]}...")
-                logger.info(f"   • candidatefirst_name: {first_name}")
-                logger.info(f"   • candidatelast_name: {last_name}")
-                logger.info(f"   • companyname: {company_name}")
-                logger.info(f"   • questionnaire_context: {len(questionnaire_context)} Zeichen")
-                logger.info(f"🔗 Browser URL: {browser_url[:100]}...")
+                logger.info(f"   • var_candidatefirst_name: {first_name}")
+                logger.info(f"   • var_candidatelast_name: {last_name}")
+                logger.info(f"   • var_companyname: {company_name}")
+                logger.info(f"   • var_questionnaire_context: {len(questionnaire_context)} Zeichen")
+                logger.info(f"🔗 Browser URL: {browser_url[:120]}...")
                 logger.info(f"📏 URL-Länge: {len(browser_url)} Zeichen")
                 logger.info(f"{'='*70}\n")
                 
