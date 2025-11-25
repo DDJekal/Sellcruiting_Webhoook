@@ -48,8 +48,9 @@ def fetch_questionnaire_context(campaign_id: int) -> dict:
             "Content-Type": "application/json"
         }
         
-        # HIRINGS API Endpunkt: api/v1/questionnaire/<campaign_id>
-        url = f"{Config.HIRINGS_API_URL}/api/v1/questionnaire/{campaign_id}"
+        # HIRINGS API Endpunkt: questionnaire/<campaign_id>
+        # HIRINGS_API_URL enthält bereits /api/v1
+        url = f"{Config.HIRINGS_API_URL}/questionnaire/{campaign_id}"
         
         logger.info(f"📥 Lade Questionnaire von HOC: {url}")
         
