@@ -258,25 +258,15 @@ def trigger_outbound_call():
         # 4. Starte Outbound Call
         logger.info(f"\n📞 Starte Outbound Call...")
         
+        # WICHTIG: SDK unterstützt aktuell KEIN override_agent_settings bei outbound_call
+        # Dynamic Variables werden über conversation_initiation_client_data übergeben
+        # Prompt-Customization muss im Dashboard konfiguriert werden mit {{variable}} Platzhaltern
+        
         resp = client.conversational_ai.sip_trunk.outbound_call(
             agent_id=Config.ELEVENLABS_AGENT_ID,
             agent_phone_number_id=agent_phone_number_id,
             to_number=to_number,
-            
-            conversation_initiation_client_data={
-                "dynamic_variables": dynamic_variables
-            },
-            
-            # Überschreibe NUR den Prompt - alle anderen Settings bleiben aus Dashboard
-            # LLM (Claude Sonnet 4.5), Voice Settings, Conversation Config werden übernommen
-            override_agent_settings={
-                "prompt": {
-                    "prompt": enhanced_prompt
-                }
-                # LLM wird NICHT überschrieben → Dashboard-LLM (Claude Sonnet 4.5) wird genutzt
-                # Voice Settings werden NICHT überschrieben → aus Dashboard übernommen
-                # Conversation Settings werden NICHT überschrieben → aus Dashboard übernommen
-            }
+            conversation_initiation_client_data=dynamic_variables
         )
         
         logger.info(f"✅ Call erfolgreich gestartet!")
