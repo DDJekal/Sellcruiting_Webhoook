@@ -350,15 +350,19 @@ def trigger_outbound_call():
         first_name = data['candidate_first_name']
         last_name = data['candidate_last_name']
         to_number = data.get('to_number')  # OPTIONAL!
-        agent_phone_number_id = data.get('agent_phone_number_id', Config.ELEVENLABS_AGENT_PHONE_NUMBER_ID)
+        agent_phone_number_id = data.get('agent_phone_number_id')  # Optional, nur für SIP Trunk
         override_prompt = data.get('override_prompt')
         
-        # Validiere agent_phone_number_id nur wenn to_number vorhanden
+        # Validiere agent_phone_number_id nur wenn to_number vorhanden (SIP Trunk)
         if to_number and not agent_phone_number_id:
-            return jsonify({
-                "error": "Missing agent_phone_number_id",
-                "message": "Provide agent_phone_number_id in request or set ELEVENLABS_AGENT_PHONE_NUMBER_ID in environment"
-            }), 400
+            # Versuche aus Config zu holen
+            agent_phone_number_id = Config.ELEVENLABS_AGENT_PHONE_NUMBER_ID if hasattr(Config, 'ELEVENLABS_AGENT_PHONE_NUMBER_ID') else None
+            
+            if not agent_phone_number_id:
+                return jsonify({
+                    "error": "Missing agent_phone_number_id",
+                    "message": "Provide agent_phone_number_id in request for SIP trunk calls"
+                }), 400
         
         logger.info(f"\n{'='*70}")
         if to_number:
