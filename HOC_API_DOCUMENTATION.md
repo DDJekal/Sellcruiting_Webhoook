@@ -26,7 +26,7 @@ https://sellcruiting-webhoook.onrender.com
 
 ## 📡 Endpoints
 
-### 1. Conversation Link erstellen
+### 1. Outbound Call starten (SIP Trunk mit Twilio)
 
 **Endpoint:**
 ```
@@ -45,22 +45,36 @@ Authorization: Bearer FcqRJPg0LcQZBKA-VgJfQ0UvEdCkDGWoRXzc8vG6x6Q
   "campaign_id": 123,
   "company_name": "Tech Startup GmbH",
   "candidate_first_name": "Max",
-  "candidate_last_name": "Mustermann"
+  "candidate_last_name": "Mustermann",
+  "to_number": "+491234567890",
+  "agent_phone_number_id": "phnum_xxx..."
 }
 ```
+
+**Feld-Beschreibung:**
+- `campaign_id` (required): ID der Kampagne in HOC
+- `company_name` (required): Name der Firma
+- `candidate_first_name` (required): Vorname des Kandidaten
+- `candidate_last_name` (required): Nachname des Kandidaten
+- `to_number` (required): Telefonnummer des Kandidaten (E.164 Format: +491234567890)
+- `agent_phone_number_id` (required): Twilio Phone Number ID aus ElevenLabs Dashboard
 
 **Response (200):**
 ```json
 {
   "status": "success",
-  "message": "Conversation link created successfully",
+  "message": "Outbound call initiated successfully",
   "data": {
     "campaign_id": 123,
     "candidate": "Max Mustermann",
     "company": "Tech Startup GmbH",
-    "conversation_link": "https://eu.residency.elevenlabs.io/app/talk-to?agent_id=agent_2101kab7rs5tefesz0gm66418aw1",
+    "to_number": "+491234567890",
+    "conversation_id": "conv_abc123...",
+    "call_status": "initiated",
     "questionnaire_loaded": true,
-    "timestamp": "2025-11-25T11:20:05.169839"
+    "timestamp": "2025-11-25T11:20:05.169839",
+    "prompt_length": 5432,
+    "first_message": "Guten Tag Max Mustermann, hier spricht Susi von Tech Startup GmbH..."
   }
 }
 ```

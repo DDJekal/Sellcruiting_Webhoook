@@ -123,9 +123,72 @@ def fetch_questionnaire_context(campaign_id: int) -> dict:
         return {}
 
 
+def build_first_message(company_name: str, first_name: str, last_name: str, campaign_location: str = "") -> str:
+    """
+    Erstellt personalisierte First Message für den Agent
+    
+    Args:
+        company_name: Firmenname
+        first_name: Vorname Kandidat
+        last_name: Nachname Kandidat
+        campaign_location: Standort der Kampagne (optional)
+        
+    Returns:
+        Personalisierte First Message
+    """
+    if campaign_location:
+        first_message = f"Guten Tag {first_name} {last_name}, hier spricht Susi von {company_name}. Es geht um ihre Bewerbung am Standort {campaign_location}. Haben Sie ungefähr 15 Minuten Zeit für dieses Gespräch um ihre Daten zu erfassen?"
+    else:
+        first_message = f"Guten Tag {first_name} {last_name}, hier spricht Susi von {company_name}. Es geht um ihre Bewerbung. Haben Sie ungefähr 15 Minuten Zeit für dieses Gespräch um ihre Daten zu erfassen?"
+    
+    logger.info(f"📝 First Message erstellt: {first_message[:100]}...")
+    return first_message
+
+
+def build_enhanced_prompt(questionnaire: dict, company_name: str, first_name: str, last_name: str) -> str:
+    """
+    Erstellt erweiterten System-Prompt mit Questionnaire-Kontext
+    Lädt Dashboard-Prompt und ergänzt ihn mit Kontext-Daten
+    
+    Args:
+        questionnaire: Questionnaire-Daten aus HOC
+        company_name: Firmenname
+        first_name: Vorname Kandidat
+        last_name: Nachname Kandidat
+        
+    Returns:
+        Erweiterter System-Prompt mit vollem Kontext
+    """
+    
+    # Lade Dashboard-Prompt aus Datei
+    try:
+        with open('dashboard_prompt.txt', 'r', encoding='utf-8') as f:
+            dashboard_prompt = f.read()
+        logger.info("✅ Dashboard-Prompt aus Datei geladen")
+    except FileNotFoundError:
+        logger.warning("⚠️  dashboard_prompt.txt nicht gefunden, nutze Basis-Prompt")
+        dashboard_prompt = f"""Du bist ein professioneller Recruiting-Assistent für {company_name}.
+Du führst ein Gespräch mit {first_name} {last_name}."""
+    
+    # Ersetze Platzhalter im Dashboard-Prompt (falls vorhanden)
+    dashboard_prompt = dashboard_prompt.replace('{{companyname}}', company_name)
+    dashboard_prompt = dashboard_prompt.replace('{{candidatefirst_name}}', first_name)
+    dashboard_prompt = dashboard_prompt.replace('{{candidatelast_name}}', last_name)
+    
+    # Baue Questionnaire-Kontext
+    questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
+    
+    # FINALER PROMPT: Dashboard-Prompt + Questionnaire-Kontext
+    final_prompt = dashboard_prompt + "\n\n" + questionnaire_context
+    
+    logger.info(f"📝 Enhanced Prompt erstellt: {len(final_prompt)} Zeichen (Dashboard: {len(dashboard_prompt)}, Kontext: {len(questionnaire_context)})")
+    
+    return final_prompt
+
+
 def build_questionnaire_context(questionnaire: dict, company_name: str, first_name: str, last_name: str) -> str:
     """
-    Erstellt Questionnaire-Kontext als Text für Dynamic Variable
+    Erstellt Questionnaire-Kontext als formatierten Text
     
     Args:
         questionnaire: Questionnaire-Daten aus HOC
@@ -252,9 +315,9 @@ def trigger_outbound_call():
                 "message": f"Request body must be a JSON object (dict), got {type(data).__name__}"
             }), 400
         
-        # Validiere erforderliche Felder (to_number ist jetzt optional für WebRTC)
+        # Validiere erforderliche Felder
         required_fields = ['campaign_id', 'company_name', 'candidate_first_name', 
-                          'candidate_last_name']
+                          'candidate_last_name', 'to_number']  # to_number ist jetzt erforderlich für SIP Trunk
         
         missing_fields = [field for field in required_fields if not data.get(field)]
         
@@ -269,23 +332,28 @@ def trigger_outbound_call():
         company_name = data['company_name']
         first_name = data['candidate_first_name']
         last_name = data['candidate_last_name']
-        to_number = data.get('to_number')  # Optional für WebRTC
+        to_number = data['to_number']  # Erforderlich für SIP Trunk
         agent_phone_number_id = data.get(
             'agent_phone_number_id', 
-            'phnum_4801kateq1q7e61art2qbne1wgr3'  # Xelion Nummer (053138823189)
+            None  # Twilio Nummer muss konfiguriert werden
         )
         
+        # Validiere agent_phone_number_id
+        if not agent_phone_number_id:
+            return jsonify({
+                "error": "Missing agent_phone_number_id",
+                "message": "Please provide a Twilio phone number ID in the request or configure a default in the code"
+            }), 400
+        
         logger.info(f"\n{'='*70}")
-        logger.info(f"📞 NEUE CALL-ANFRAGE VON HOC")
+        logger.info(f"📞 NEUE CALL-ANFRAGE VON HOC (SIP TRUNK)")
         logger.info(f"{'='*70}")
         logger.info(f"⏰ Zeit: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"📋 Campaign-ID: {campaign_id}")
         logger.info(f"👤 Kandidat: {first_name} {last_name}")
         logger.info(f"🏢 Firma: {company_name}")
-        if to_number:
-            logger.info(f"📞 Nummer: {to_number}")
-        else:
-            logger.info(f"🔗 Modus: WebRTC Link")
+        logger.info(f"📞 Nummer: {to_number}")
+        logger.info(f"📱 Phone Number ID: {agent_phone_number_id}")
         
         # 1. Hole Questionnaire aus HOC
         logger.info(f"\n🔄 Lade Questionnaire für Campaign {campaign_id}...")
@@ -294,116 +362,85 @@ def trigger_outbound_call():
         if not questionnaire:
             logger.warning(f"⚠️  Kein Questionnaire gefunden, fahre mit Basis-Prompt fort")
         
-        # 2. Baue Questionnaire-Kontext für Dynamic Variable
-        questionnaire_context = build_questionnaire_context(
+        # 2. Baue Enhanced Prompt mit Questionnaire-Kontext
+        enhanced_prompt = build_enhanced_prompt(
             questionnaire=questionnaire,
             company_name=company_name,
             first_name=first_name,
             last_name=last_name
         )
         
-        logger.info(f"📝 Questionnaire-Kontext erstellt: {len(questionnaire_context)} Zeichen")
+        # 3. Baue personalisierte First Message
+        campaign_location = (
+            questionnaire.get('campaignlocation_label', '') or 
+            questionnaire.get('work_location', '') or 
+            questionnaire.get('location', '') or
+            (f"{questionnaire.get('work_location', '')} {questionnaire.get('work_location_postal_code', '')}".strip())
+        )
         
-        # 3. Bereite Dynamic Variables vor
-        # WICHTIG: Diese Variablen werden im Dashboard-Prompt verwendet!
-        dynamic_variables = {
-            # Basis-Variablen (immer vorhanden)
-            "companyname": company_name,
-            "candidatefirst_name": first_name,
-            "candidatelast_name": last_name,
-            "campaign_id": str(campaign_id),
+        first_message = build_first_message(
+            company_name=company_name,
+            first_name=first_name,
+            last_name=last_name,
+            campaign_location=campaign_location
+        )
+        
+        logger.info(f"📝 Enhanced Prompt: {len(enhanced_prompt)} Zeichen")
+        logger.info(f"💬 First Message: {first_message}")
+        
+        # 4. Starte Outbound Call mit agent_override
+        logger.info(f"\n{'='*70}")
+        logger.info(f"📞 STARTE OUTBOUND CALL (SIP TRUNK mit Twilio)")
+        logger.info(f"{'='*70}")
+        
+        try:
+            response = client.conversational_ai.sip_trunk.outbound_call(
+                agent_id=Config.ELEVENLABS_AGENT_ID,
+                to_number=to_number,
+                agent_phone_number_id=agent_phone_number_id,
+                agent_override={
+                    "prompt": {
+                        "prompt": enhanced_prompt  # ← Überschreibt Dashboard-Prompt!
+                    },
+                    "first_message": first_message  # ← Überschreibt Dashboard First Message!
+                }
+            )
             
-            # NEU: Questionnaire-Kontext als Dynamic Variable
-            # Wird im Dashboard-Prompt mit {{questionnaire_context}} verwendet
-            "questionnaire_context": questionnaire_context,
+            # Parse Response
+            conversation_id = getattr(response, 'conversation_id', 'unknown')
+            call_status = getattr(response, 'status', 'initiated')
             
-            # Variablen aus Questionnaire (werden im Prompt verwendet)
-            "companysize": questionnaire.get('companysize', '') or questionnaire.get('company_size', '') or questionnaire.get('employee_count', ''),
-            "companypitch": questionnaire.get('companypitch', '') or questionnaire.get('company_pitch', '') or questionnaire.get('description', ''),
-            "companypriorities": questionnaire.get('companypriorities', '') or questionnaire.get('company_priorities', '') or questionnaire.get('priorities', ''),
+            logger.info(f"✅ Call erfolgreich gestartet!")
+            logger.info(f"📞 Conversation ID: {conversation_id}")
+            logger.info(f"📊 Status: {call_status}")
+            logger.info(f"{'='*70}\n")
             
-            # Location (wichtig - wird im Fehler erwähnt!)
-            "campaignlocation_label": (
-                questionnaire.get('campaignlocation_label', '') or 
-                questionnaire.get('work_location', '') or 
-                questionnaire.get('location', '') or
-                (f"{questionnaire.get('work_location', '')} {questionnaire.get('work_location_postal_code', '')}".strip())
-            ),
+            # Response zurück an HOC
+            return jsonify({
+                "status": "success",
+                "message": "Outbound call initiated successfully",
+                "data": {
+                    "campaign_id": campaign_id,
+                    "candidate": f"{first_name} {last_name}",
+                    "company": company_name,
+                    "to_number": to_number,
+                    "conversation_id": conversation_id,
+                    "call_status": call_status,
+                    "questionnaire_loaded": bool(questionnaire),
+                    "timestamp": datetime.now().isoformat(),
+                    "prompt_length": len(enhanced_prompt),
+                    "first_message": first_message
+                }
+            }), 200
             
-            # Weitere Variablen
-            "position": questionnaire.get('position', '') or questionnaire.get('job_title', ''),
-            "department": questionnaire.get('department', ''),
-            "campaign_title": questionnaire.get('title', ''),
-            "work_location": questionnaire.get('work_location', ''),
-            "work_location_postal_code": questionnaire.get('work_location_postal_code', ''),
-            "company_benefits": questionnaire.get('company_benefits', ''),
-        }
-        
-        # Extrahiere campaignlocation_label für required_vars (wird im Prompt verwendet!)
-        campaign_location = dynamic_variables.get('campaignlocation_label', '')
-        
-        # WICHTIG: Basis-Variablen müssen IMMER vorhanden sein (auch wenn leer)
-        # Diese werden im Dashboard-Prompt verwendet und müssen übergeben werden
-        required_vars = {
-            "companyname": company_name,
-            "candidatefirst_name": first_name,
-            "candidatelast_name": last_name,
-            "campaignlocation_label": campaign_location,  # Wird im Prompt verwendet - muss vorhanden sein!
-            "questionnaire_context": questionnaire_context,  # NEU: Fragebogen-Kontext immer übergeben
-        }
-        
-        # Füge erforderliche Variablen hinzu (auch wenn leer)
-        for key, value in required_vars.items():
-            dynamic_variables[key] = value
-        
-        # Entferne leere Werte NUR für optionale Variablen (nicht für Basis-Variablen)
-        # Basis-Variablen bleiben immer erhalten
-        optional_vars = set(dynamic_variables.keys()) - set(required_vars.keys())
-        dynamic_variables = {
-            k: v for k, v in dynamic_variables.items() 
-            if k in required_vars or (k in optional_vars and v)
-        }
-        
-        logger.info(f"📋 Dynamic Variables ({len(dynamic_variables)}): {list(dynamic_variables.keys())}")
-        logger.info(f"📋 Basis-Variablen: companyname={dynamic_variables.get('companyname', 'N/A')}, candidatefirst_name={dynamic_variables.get('candidatefirst_name', 'N/A')}, candidatelast_name={dynamic_variables.get('candidatelast_name', 'N/A')}")
-        
-        # 4. Generiere WebRTC Conversation Link mit Dynamic Variables
-        logger.info(f"\n🔗 Generiere WebRTC Conversation Link mit Dynamic Variables...")
-        logger.info(f"📋 Variablen: {list(dynamic_variables.keys())}")
-        
-        # WICHTIG: Dynamic Variables müssen im ElevenLabs Dashboard konfiguriert sein!
-        # Die Variablen werden als Query-Parameter übergeben
-        base_url = f"https://eu.residency.elevenlabs.io/app/talk-to?agent_id={Config.ELEVENLABS_AGENT_ID}"
-        
-        # Füge Dynamic Variables als Query-Parameter hinzu
-        if dynamic_variables:
-            # URL-encode die Variablen
-            query_params = urlencode(dynamic_variables)
-            conversation_link = f"{base_url}&{query_params}"
-        else:
-            conversation_link = base_url
-        
-        conversation_id = "public-link-with-vars"
-        
-        logger.info(f"✅ Conversation Link mit Variablen generiert!")
-        logger.info(f"🔗 Link: {conversation_link[:200]}...")
-        logger.info(f"{'='*70}\n")
-        
-        # Response zurück an HOC mit Link
-        return jsonify({
-            "status": "success",
-            "message": "Conversation link created successfully",
-            "data": {
-                "campaign_id": campaign_id,
-                "candidate": f"{first_name} {last_name}",
-                "company": company_name,
-                "conversation_id": conversation_id,
-                "conversation_link": conversation_link,  # ← DER LINK!
-                "questionnaire_loaded": bool(questionnaire),
-                "timestamp": datetime.now().isoformat(),
-                "note": "Kandidat kann diesen Link öffnen und im Browser mit dem Agent sprechen (ohne Login!)"
-            }
-        }), 200
+        except Exception as api_error:
+            logger.error(f"❌ ElevenLabs API Error: {api_error}", exc_info=True)
+            return jsonify({
+                "status": "error",
+                "error": "API call failed",
+                "message": str(api_error),
+                "timestamp": datetime.now().isoformat()
+            }), 500
         
     except Exception as e:
         logger.error(f"❌ Fehler beim Call: {e}", exc_info=True)
