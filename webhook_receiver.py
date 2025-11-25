@@ -5,6 +5,7 @@ Nutzt campaign_id um Questionnaire/Kontext aus HOC zu laden
 """
 import sys
 import io
+import json
 from flask import Flask, request, jsonify
 from elevenlabs import ElevenLabs
 from elevenlabs.environment import ElevenLabsEnvironment
@@ -243,11 +244,38 @@ def trigger_outbound_call():
     }
     """
     try:
-        # Parse Request
-        data = request.get_json()
+        # Parse Request - robuster JSON Parsing
+        data = request.get_json(force=True, silent=True)
         
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
+        # Falls get_json() None oder String zurückgibt, versuche manuell zu parsen
+        if not data or isinstance(data, str):
+            try:
+                if isinstance(data, str):
+                    # data ist bereits ein String, parse es
+                    data = json.loads(data)
+                elif request.data:
+                    # Versuche request.data zu parsen
+                    data = json.loads(request.data.decode('utf-8'))
+                else:
+                    return jsonify({
+                        "error": "No JSON data provided",
+                        "message": "Request body is empty"
+                    }), 400
+            except (json.JSONDecodeError, AttributeError, UnicodeDecodeError) as e:
+                logger.error(f"❌ JSON Parse Error: {e}")
+                logger.error(f"Request data: {request.data[:200] if request.data else 'None'}")
+                return jsonify({
+                    "error": "Invalid JSON format",
+                    "message": f"Could not parse JSON: {str(e)}"
+                }), 400
+        
+        # Sicherstellen dass data ein Dict ist
+        if not isinstance(data, dict):
+            logger.error(f"❌ Data is not a dict, type: {type(data)}, value: {data}")
+            return jsonify({
+                "error": "Invalid request format",
+                "message": f"Request body must be a JSON object (dict), got {type(data).__name__}"
+            }), 400
         
         # Validiere erforderliche Felder (to_number ist jetzt optional für WebRTC)
         required_fields = ['campaign_id', 'company_name', 'candidate_first_name', 
