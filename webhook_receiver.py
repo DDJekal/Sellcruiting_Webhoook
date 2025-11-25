@@ -483,32 +483,19 @@ def trigger_outbound_call():
             logger.info(f"{'='*70}")
             
             try:
-                # Erstelle Conversation mit conversation_config_override
-                client_data = ConversationInitiationClientDataRequestInput(
-                    conversation_config_override={
-                        "agent": {
-                            "prompt": {
-                                "prompt": enhanced_prompt
-                            },
-                            "first_message": first_message
-                        }
-                    }
+                # Hole direkt Signed URL (Conversation wird automatisch erstellt)
+                # HINWEIS: conversation_config_override wird NICHT unterstützt bei WebRTC Links!
+                # Die Conversation nutzt die Dashboard-Konfiguration
+                logger.info("ℹ️  WebRTC Links nutzen Dashboard-Konfiguration (kein Override möglich)")
+                
+                signed_result = client.conversational_ai.conversations.get_signed_url(
+                    agent_id=Config.ELEVENLABS_AGENT_ID
                 )
                 
-                conv = client.conversational_ai.conversations.create(
-                    agent_id=Config.ELEVENLABS_AGENT_ID,
-                    conversation_initiation_client_data=client_data
-                )
+                signed_url = getattr(signed_result, 'url', None)
                 
-                conversation_id = getattr(conv, 'id', getattr(conv, 'conversation_id', None))
-                
-                # Versuche Signed URL zu bekommen
-                if hasattr(client.conversational_ai.conversations, 'get_signed_url'):
-                    signed_result = client.conversational_ai.conversations.get_signed_url(conversation_id=conversation_id)
-                    signed_url = getattr(signed_result, 'url', signed_result)
-                    
+                if signed_url:
                     logger.info(f"✅ WebRTC Link erstellt!")
-                    logger.info(f"💬 Conversation ID: {conversation_id}")
                     logger.info(f"🔗 Signed URL: {signed_url[:80]}...")
                     logger.info(f"{'='*70}\n")
                     
@@ -520,16 +507,14 @@ def trigger_outbound_call():
                             "campaign_id": campaign_id,
                             "candidate": f"{first_name} {last_name}",
                             "company": company_name,
-                            "conversation_id": conversation_id,
                             "signed_url": signed_url,
                             "questionnaire_loaded": bool(questionnaire),
                             "timestamp": datetime.now().isoformat(),
-                            "prompt_length": len(enhanced_prompt),
-                            "first_message": first_message
+                            "note": "WebRTC links use Dashboard configuration (override not supported)"
                         }
                     }), 200
                 else:
-                    raise AttributeError('get_signed_url not available')
+                    raise AttributeError('Could not get signed URL')
                     
             except Exception as api_error:
                 logger.error(f"❌ WebRTC Link Error: {api_error}", exc_info=True)

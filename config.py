@@ -15,7 +15,6 @@ class Config:
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
     CURSOR_API_KEY = os.getenv("CURSOR_API_KEY")
     ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID")
-    ELEVENLABS_AGENT_PHONE_NUMBER_ID = os.getenv("ELEVENLABS_AGENT_PHONE_NUMBER_ID")
     
     # HIRINGS API Configuration (von HOC)
     HIRINGS_API_URL = os.getenv("HIRINGS_API_URL")
@@ -54,9 +53,6 @@ class Config:
         # HIRINGS API Token ist optional für Tests, aber empfohlen
         if not cls.HIRINGS_API_TOKEN:
             print("⚠️  Warnung: HIRINGS_API_TOKEN fehlt - Questionnaire-Abruf wird nicht funktionieren")
-        
-        if not cls.ELEVENLABS_AGENT_PHONE_NUMBER_ID:
-            print("⚠️  Warnung: ELEVENLABS_AGENT_PHONE_NUMBER_ID fehlt - agent_phone_number_id muss im Request übergeben werden")
         
         if errors:
             raise ValueError(
