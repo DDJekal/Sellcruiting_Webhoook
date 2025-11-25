@@ -486,75 +486,95 @@ def trigger_outbound_call():
             logger.info(f"🔗 ERSTELLE WEBRTC LINK (Kein to_number vorhanden)")
             logger.info(f"{'='*70}")
             
+            # WebRTC Links nutzen Dashboard-Konfiguration + Dynamic Variables via URL
+            logger.info("ℹ️  WebRTC Links nutzen Dashboard-Konfiguration mit Dynamic Variables")
+            
             try:
-                # Hole direkt Signed URL (Conversation wird automatisch erstellt)
-                # HINWEIS: conversation_config_override wird NICHT unterstützt bei WebRTC Links!
-                # Die Conversation nutzt die Dashboard-Konfiguration
-                logger.info("ℹ️  WebRTC Links nutzen Dashboard-Konfiguration (kein Override möglich)")
-                
+                # Hole Signed URL von ElevenLabs
                 signed_result = client.conversational_ai.conversations.get_signed_url(
                     agent_id=Config.ELEVENLABS_AGENT_ID
                 )
                 
-                signed_url = signed_result.signed_url  # ✅ Korrektes Attribut!
+                base_url = signed_result.signed_url
                 
-                if signed_url:
-                    logger.info(f"✅ WebRTC Link erstellt!")
-                    logger.info(f"🔗 Signed URL: {signed_url[:80]}...")
-                    logger.info(f"{'='*70}\n")
-                    
-                    return jsonify({
-                        "status": "success",
-                        "method": "webrtc_link",
-                        "message": "WebRTC link created successfully",
-                        "data": {
-                            "campaign_id": campaign_id,
-                            "candidate": f"{first_name} {last_name}",
-                            "company": company_name,
-                            "signed_url": signed_url,
-                            "questionnaire_loaded": bool(questionnaire),
-                            "timestamp": datetime.now().isoformat(),
-                            "note": "WebRTC links use Dashboard configuration (override not supported)"
-                        }
-                    }), 200
-                else:
-                    raise AttributeError('Could not get signed URL')
-                    
-            except Exception as api_error:
-                logger.error(f"❌ WebRTC Link Error: {api_error}", exc_info=True)
-                
-                # Fallback: Erstelle URL mit Query-Parametern
-                logger.warning("⚠️  Fallback: Erstelle URL mit Query-Parametern")
-                
+                # Baue Questionnaire-Kontext für Dynamic Variables
                 questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
-                params = {
-                    'agent_id': Config.ELEVENLABS_AGENT_ID,
-                    'companyname': company_name,
-                    'candidatefirst_name': first_name,
-                    'candidatelast_name': last_name,
-                    'questionnaire_context': questionnaire_context[:500]  # Begrenzt wg. URL-Länge
-                }
-                signed_url = f"https://eu.residency.elevenlabs.io/app/talk-to?{urlencode(params)}"
                 
-                logger.info(f"✅ Fallback URL erstellt")
-                logger.info(f"🔗 URL: {signed_url[:80]}...")
+                # Extrahiere Fragen als strukturierte Liste
+                questions_list = ""
+                if questionnaire and questionnaire.get('questions'):
+                    logger.info(f"📋 Extrahiere {len(questionnaire['questions'])} Fragen für Dynamic Variables")
+                    
+                    for i, q in enumerate(questionnaire['questions'], 1):
+                        if isinstance(q, dict):
+                            question_text = q.get('question', '')
+                            priority = q.get('priority', 2)
+                            context = q.get('context', '')
+                            preamble = q.get('preamble', '')
+                            
+                            # Marker für Priorität
+                            marker = "⚠️ MUSS" if priority == 1 else "ℹ️ OPTIONAL"
+                            
+                            questions_list += f"\n{i}. [{marker}] {question_text}"
+                            
+                            if context:
+                                questions_list += f" (Kontext: {context})"
+                            if preamble:
+                                questions_list += f" (Überleitung: {preamble})"
+                
+                # Füge Dynamic Variables als URL-Parameter hinzu
+                # Diese füllen die {{variables}} im Dashboard-Prompt
+                dynamic_vars = {
+                    'candidate_first_name': first_name,
+                    'candidate_last_name': last_name,
+                    'company_name': company_name,
+                    'campaign_id': str(campaign_id),
+                    'questionnaire_context': questionnaire_context[:1500],  # Max 1500 Zeichen
+                    'questions_list': questions_list[:1500] if questions_list else "Keine spezifischen Fragen"
+                }
+                
+                # Hänge Parameter an WebSocket URL
+                separator = '&' if '?' in base_url else '?'
+                param_string = urlencode(dynamic_vars)
+                signed_url = f"{base_url}{separator}{param_string}"
+                
+                logger.info(f"✅ WebRTC Link mit Dynamic Variables erstellt!")
+                logger.info(f"📊 Dynamic Variables gefüllt:")
+                logger.info(f"   • candidate_first_name: {first_name}")
+                logger.info(f"   • candidate_last_name: {last_name}")
+                logger.info(f"   • company_name: {company_name}")
+                logger.info(f"   • campaign_id: {campaign_id}")
+                logger.info(f"   • questionnaire_context: {len(questionnaire_context)} Zeichen")
+                logger.info(f"   • questions_list: {len(questions_list)} Zeichen ({len(questionnaire.get('questions', []))} Fragen)")
+                logger.info(f"🔗 Signed URL: {base_url[:60]}...&{param_string[:40]}...")
                 logger.info(f"{'='*70}\n")
                 
                 return jsonify({
                     "status": "success",
-                    "method": "webrtc_link_fallback",
-                    "message": "WebRTC link created (fallback mode)",
+                    "method": "webrtc_link",
+                    "message": "WebRTC link created successfully with dynamic variables",
                     "data": {
                         "campaign_id": campaign_id,
                         "candidate": f"{first_name} {last_name}",
                         "company": company_name,
-                        "conversation_id": None,
                         "signed_url": signed_url,
                         "questionnaire_loaded": bool(questionnaire),
+                        "questions_count": len(questionnaire.get('questions', [])) if questionnaire else 0,
                         "timestamp": datetime.now().isoformat(),
-                        "fallback": True
+                        "dynamic_variables_filled": list(dynamic_vars.keys()),
+                        "note": "WebRTC link uses Dashboard configuration with dynamic variables"
                     }
                 }), 200
+                    
+            except Exception as api_error:
+                logger.error(f"❌ WebRTC Link Error: {api_error}", exc_info=True)
+                
+                return jsonify({
+                    "status": "error",
+                    "error": "WebRTC Link creation failed",
+                    "message": str(api_error),
+                    "timestamp": datetime.now().isoformat()
+                }), 500
         
     except Exception as e:
         logger.error(f"❌ Fehler beim Call: {e}", exc_info=True)
