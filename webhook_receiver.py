@@ -171,8 +171,7 @@ def build_enhanced_prompt(questionnaire: dict, company_name: str, first_name: st
         dashboard_prompt = f"""Du bist ein professioneller Recruiting-Assistent für {company_name}.
 Du führst ein Gespräch mit {first_name} {last_name}."""
     
-    # Ersetze Platzhalter im Dashboard-Prompt (falls vorhanden)
-    dashboard_prompt = dashboard_prompt.replace('{{companyname}}', company_name)
+    # Ersetze NUR Kandidaten-Platzhalter (Rest kommt aus Kontext!)
     dashboard_prompt = dashboard_prompt.replace('{{candidatefirst_name}}', first_name)
     dashboard_prompt = dashboard_prompt.replace('{{candidatelast_name}}', last_name)
     
@@ -221,8 +220,18 @@ Firma: {company_name}
         if questionnaire.get('department'):
             questionnaire_context += f"\nAbteilung: {questionnaire['department']}"
         
+        # Unternehmensinformationen
+        if questionnaire.get('company_size'):
+            questionnaire_context += f"\nMitarbeiterzahl: {questionnaire['company_size']}"
+        
+        if questionnaire.get('company_pitch'):
+            questionnaire_context += f"\nUnternehmensbeschreibung: {questionnaire['company_pitch']}"
+        
+        if questionnaire.get('company_priorities'):
+            questionnaire_context += f"\nAktuelle Prioritäten: {questionnaire['company_priorities']}"
+        
         if questionnaire.get('description'):
-            questionnaire_context += f"\n\nBeschreibung:\n{questionnaire['description']}"
+            questionnaire_context += f"\n\nStellenbeschreibung:\n{questionnaire['description']}"
         
         if questionnaire.get('job_requirements'):
             questionnaire_context += f"\n\nAnforderungen:\n{questionnaire['job_requirements']}"
@@ -233,6 +242,9 @@ Firma: {company_name}
         
         if questionnaire.get('work_location_postal_code'):
             questionnaire_context += f"\nPostleitzahl des Arbeitsplatzes: {questionnaire['work_location_postal_code']}"
+        
+        if questionnaire.get('campaignlocation_label'):
+            questionnaire_context += f"\nStandort-Label: {questionnaire['campaignlocation_label']}"
         
         if questionnaire.get('questions'):
             questionnaire_context += "\n\nRelevante Fragen aus Questionnaire:"
