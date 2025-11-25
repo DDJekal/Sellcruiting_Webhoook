@@ -195,9 +195,9 @@ def trigger_outbound_call():
         if not data:
             return jsonify({"error": "No JSON data provided"}), 400
         
-        # Validiere erforderliche Felder
+        # Validiere erforderliche Felder (to_number ist jetzt optional für WebRTC)
         required_fields = ['campaign_id', 'company_name', 'candidate_first_name', 
-                          'candidate_last_name', 'to_number']
+                          'candidate_last_name']
         
         missing_fields = [field for field in required_fields if not data.get(field)]
         
@@ -256,35 +256,42 @@ def trigger_outbound_call():
             "campaign_title": questionnaire.get('title', '')
         }
         
-        # 4. Starte Outbound Call
-        logger.info(f"\n📞 Starte Outbound Call...")
+        # 4. Generiere WebRTC Conversation Link
+        logger.info(f"\n🔗 Generiere WebRTC Conversation Link...")
         
-        # WICHTIG: SDK unterstützt aktuell KEIN override_agent_settings bei outbound_call
-        # Dynamic Variables werden über conversation_initiation_client_data übergeben
-        # Prompt-Customization muss im Dashboard konfiguriert werden mit {{variable}} Platzhaltern
+        # Erstelle eine neue Conversation (WebRTC)
+        # Dynamic Variables werden als metadata übergeben
+        conversation_config = {
+            "agent_id": Config.ELEVENLABS_AGENT_ID,
+        }
         
-        resp = client.conversational_ai.sip_trunk.outbound_call(
-            agent_id=Config.ELEVENLABS_AGENT_ID,
-            agent_phone_number_id=agent_phone_number_id,
-            to_number=to_number,
-            conversation_initiation_client_data=dynamic_variables
+        # Initiiere Conversation
+        resp = client.conversational_ai.conversations.create(
+            agent_id=Config.ELEVENLABS_AGENT_ID
         )
         
-        logger.info(f"✅ Call erfolgreich gestartet!")
+        conversation_id = resp.conversation_id if hasattr(resp, 'conversation_id') else str(resp)
+        
+        # Generiere WebRTC Link
+        conversation_link = f"https://elevenlabs.io/app/conversation/{conversation_id}"
+        
+        logger.info(f"✅ Conversation Link generiert!")
+        logger.info(f"🔗 Link: {conversation_link}")
         logger.info(f"{'='*70}\n")
         
-        # Response zurück an HOC
+        # Response zurück an HOC mit Link
         return jsonify({
             "status": "success",
-            "message": "Outbound call started successfully",
+            "message": "Conversation link created successfully",
             "data": {
                 "campaign_id": campaign_id,
                 "candidate": f"{first_name} {last_name}",
                 "company": company_name,
-                "to_number": to_number,
-                "conversation_id": getattr(resp, 'conversation_id', None),
+                "conversation_id": conversation_id,
+                "conversation_link": conversation_link,  # ← DER LINK!
                 "questionnaire_loaded": bool(questionnaire),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "note": "Kandidat kann diesen Link öffnen und im Browser mit dem Agent sprechen"
             }
         }), 200
         
