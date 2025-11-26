@@ -23,6 +23,14 @@ class Config:
     # Webhook API Key (für HOC Authentifizierung)
     WEBHOOK_API_KEY = os.getenv("WEBHOOK_API_KEY")
     
+    # Twilio Configuration
+    TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+    TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+    TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+    
+    # ElevenLabs Phone Number ID
+    ELEVENLABS_AGENT_PHONE_NUMBER_ID = os.getenv("ELEVENLABS_AGENT_PHONE_NUMBER_ID")
+    
     # ElevenLabs API URL (EU Region für Data Residency Keys)
     # Für EU Data Residency Keys muss die EU-spezifische Base URL verwendet werden
     ELEVENLABS_API_URL = "https://api.elevenlabs.io"  # SDK handled das automatisch mit dem _eu Key

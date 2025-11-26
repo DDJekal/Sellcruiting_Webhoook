@@ -660,6 +660,152 @@ def create_webrtc_link():
             "timestamp": datetime.now().isoformat()
         }), 500
 
+@app.route('/webhook/twilio-personalization', methods=['POST'])
+@require_api_key
+def twilio_personalization():
+    """
+    ElevenLabs Twilio Personalization Webhook
+    
+    Wird von ElevenLabs aufgerufen, wenn ein eingehender Twilio-Call ankommt.
+    Gibt personalisierte conversation_initiation_client_data zurück.
+    
+    Request (von ElevenLabs):
+    {
+        "caller_id": "+4915204465582",
+        "agent_id": "agent_...",
+        "called_number": "+123456...",
+        "call_sid": "CA..."
+    }
+    
+    Response:
+    {
+        "type": "conversation_initiation_client_data",
+        "dynamic_variables": {...},
+        "conversation_config_override": {...}
+    }
+    """
+    try:
+        logger.info(f"\n{'='*70}")
+        logger.info(f"🔔 TWILIO PERSONALIZATION WEBHOOK AUFGERUFEN")
+        logger.info(f"{'='*70}")
+        
+        # Parse incoming data
+        data = request.get_json()
+        logger.info(f"📥 Empfangene Daten: {json.dumps(data, indent=2)}")
+        
+        caller_id = data.get('caller_id')  # z.B. +4915204465582
+        agent_id = data.get('agent_id')
+        called_number = data.get('called_number')
+        call_sid = data.get('call_sid')
+        
+        # TODO: Lookup campaign_id from HOC based on caller_id
+        # Für jetzt: Nutze eine Test campaign_id
+        campaign_id = 804  # Beispiel: Urban Kita gGmbH
+        
+        # Hole Kandidaten-Daten (in Produktion: aus Datenbank via caller_id)
+        # Für jetzt: Beispiel-Daten
+        first_name = "Max"
+        last_name = "Mustermann"
+        company_name = "Urban Kita gGmbH"
+        
+        logger.info(f"📞 Anruf von: {caller_id}")
+        logger.info(f"👤 Kandidat: {first_name} {last_name}")
+        logger.info(f"🏢 Firma: {company_name}")
+        logger.info(f"📋 Campaign ID: {campaign_id}")
+        
+        # Hole Questionnaire-Kontext von HOC
+        questionnaire = fetch_questionnaire_context(campaign_id)
+        
+        if not questionnaire:
+            logger.warning(f"⚠️  Kein Questionnaire für campaign_id {campaign_id} gefunden!")
+            # Fallback: Minimaler Kontext
+            questionnaire = {
+                'campaign_name': 'Allgemeine Bewerbung',
+                'work_location': 'Berlin',
+                'questions_list': []
+            }
+        
+        # Baue Enhanced Prompt mit Questionnaire-Kontext
+        enhanced_prompt = build_enhanced_prompt(
+            questionnaire=questionnaire,
+            company_name=company_name,
+            first_name=first_name,
+            last_name=last_name
+        )
+        
+        # Baue Questionnaire-Kontext für Dynamic Variables
+        questionnaire_context = build_questionnaire_context(
+            questionnaire=questionnaire,
+            company_name=company_name,
+            first_name=first_name,
+            last_name=last_name
+        )
+        
+        # Extrahiere campaign_location für First Message
+        campaign_location = (
+            questionnaire.get('campaignlocation_label', '') or 
+            questionnaire.get('work_location', '') or 
+            questionnaire.get('location', '') or
+            (f"{questionnaire.get('work_location', '')} {questionnaire.get('work_location_postal_code', '')}".strip())
+        )
+        
+        first_message = build_first_message(
+            company_name=company_name,
+            first_name=first_name,
+            last_name=last_name,
+            campaign_location=campaign_location
+        )
+        
+        logger.info(f"📝 Enhanced Prompt: {len(enhanced_prompt)} Zeichen")
+        logger.info(f"💬 First Message: {first_message[:80]}...")
+        logger.info(f"📊 Questionnaire Context: {len(questionnaire_context)} Zeichen")
+        
+        # Baue Response im RICHTIGEN Format für ElevenLabs
+        response_data = {
+            "type": "conversation_initiation_client_data",
+            "dynamic_variables": {
+                "candidatefirst_name": first_name,
+                "candidatelast_name": last_name,
+                "companyname": company_name,
+                "questionnaire_context": questionnaire_context
+            },
+            "conversation_config_override": {
+                "agent": {
+                    "prompt": {
+                        "prompt": enhanced_prompt
+                    },
+                    "first_message": first_message,
+                    "language": "de"
+                }
+            }
+        }
+        
+        logger.info(f"✅ Personalisierte Daten erstellt!")
+        logger.info(f"{'='*70}\n")
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Fehler in Twilio Personalization: {e}", exc_info=True)
+        
+        # Fallback: Minimale Response
+        return jsonify({
+            "type": "conversation_initiation_client_data",
+            "dynamic_variables": {
+                "candidatefirst_name": "Kandidat",
+                "candidatelast_name": "",
+                "companyname": "Unser Unternehmen",
+                "questionnaire_context": ""
+            },
+            "conversation_config_override": {
+                "agent": {
+                    "first_message": "Guten Tag, wie kann ich Ihnen helfen?",
+                    "language": "de"
+                }
+            }
+        }), 200
+
+
 @app.route('/webhook/test-questionnaire/<int:campaign_id>', methods=['GET'])
 def test_questionnaire_fetch(campaign_id):
     """Test-Endpoint um Questionnaire-Abruf zu testen"""
@@ -691,6 +837,7 @@ HIRINGS API: {Config.HIRINGS_API_URL}/api/v1/questionnaire/<campaign_id>
 
 Endpoints:
   POST /webhook/trigger-call                 - Empfängt Call-Request
+  POST /webhook/twilio-personalization       - Twilio Personalization Webhook
   GET  /webhook/health                       - Health Check
   GET  /webhook/test-questionnaire/<id>     - Test Questionnaire-Abruf
 
