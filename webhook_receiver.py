@@ -806,6 +806,23 @@ def twilio_personalization():
         }), 200
 
 
+@app.route('/webhook/twilio-status', methods=['POST'])
+def twilio_status():
+    """
+    Twilio Status Callback Endpoint
+    Empfängt Status-Updates von Twilio Calls
+    """
+    try:
+        data = request.form.to_dict()
+        logger.info(f"📞 Twilio Status Update: {data.get('CallStatus', 'unknown')}")
+        logger.info(f"   Call SID: {data.get('CallSid', 'unknown')}")
+        
+        return jsonify({"status": "received"}), 200
+    except Exception as e:
+        logger.error(f"❌ Fehler in Twilio Status: {e}")
+        return jsonify({"status": "error"}), 200
+
+
 @app.route('/webhook/test-questionnaire/<int:campaign_id>', methods=['GET'])
 def test_questionnaire_fetch(campaign_id):
     """Test-Endpoint um Questionnaire-Abruf zu testen"""
