@@ -418,52 +418,67 @@ def trigger_outbound_call():
         # =================================================================
         
         if to_number:
-            # 📞 OPTION A: SIP TRUNK OUTBOUND CALL (Twilio)
+            # 📞 OPTION A: TWILIO PROGRAMMABLE VOICE → ELEVENLABS
             logger.info(f"\n{'='*70}")
-            logger.info(f"📞 STARTE OUTBOUND CALL (SIP TRUNK mit Twilio)")
+            logger.info(f"📞 STARTE TWILIO OUTBOUND CALL MIT ELEVENLABS PERSONALISIERUNG")
             logger.info(f"{'='*70}")
             
             try:
-                # Erstelle ConversationInitiationClientDataRequestInput mit conversation_config_override
-                client_data = ConversationInitiationClientDataRequestInput(
-                    conversation_config_override={
-                        "agent": {
-                            "prompt": {
-                                "prompt": enhanced_prompt  # ← Überschreibt Dashboard-Prompt!
-                            },
-                            "first_message": first_message  # ← Überschreibt Dashboard First Message!
-                        }
-                    }
+                from twilio.rest import Client as TwilioClient
+                
+                # Twilio Client
+                twilio_client = TwilioClient(
+                    Config.TWILIO_ACCOUNT_SID,
+                    Config.TWILIO_AUTH_TOKEN
                 )
                 
-                response = client.conversational_ai.sip_trunk.outbound_call(
-                    agent_id=Config.ELEVENLABS_AGENT_ID,
-                    to_number=to_number,
-                    agent_phone_number_id=agent_phone_number_id,
-                    conversation_initiation_client_data=client_data
+                # Erstelle Signed URL für ElevenLabs Agent
+                signed_result = client.conversational_ai.conversations.get_signed_url(
+                    agent_id=Config.ELEVENLABS_AGENT_ID
+                )
+                signed_url = getattr(signed_result, 'signed_url', None)
+                
+                if not signed_url:
+                    raise ValueError("Could not get signed URL from ElevenLabs")
+                
+                # Baue TwiML URL mit Personalisierung
+                # Der TwiML-Endpoint wird den Call zu ElevenLabs mit Personalisierung weiterleiten
+                twiml_url = f"https://sellcruiting-webhoook.onrender.com/webhook/twilio-twiml"
+                twiml_url += f"?campaign_id={campaign_id}"
+                twiml_url += f"&first_name={first_name}"
+                twiml_url += f"&last_name={last_name}"
+                twiml_url += f"&company_name={company_name}"
+                
+                logger.info(f"🔗 TwiML URL: {twiml_url}")
+                logger.info(f"📞 Rufe {to_number} an...")
+                
+                # Starte Twilio Outbound Call
+                call = twilio_client.calls.create(
+                    to=to_number,
+                    from_=Config.TWILIO_PHONE_NUMBER,
+                    url=twiml_url,
+                    method='POST',
+                    status_callback="https://sellcruiting-webhoook.onrender.com/webhook/twilio-status",
+                    status_callback_event=['initiated', 'ringing', 'answered', 'completed']
                 )
                 
-                # Parse Response
-                conversation_id = getattr(response, 'conversation_id', 'unknown')
-                call_status = getattr(response, 'status', 'initiated')
-                
-                logger.info(f"✅ Call erfolgreich gestartet!")
-                logger.info(f"📞 Conversation ID: {conversation_id}")
-                logger.info(f"📊 Status: {call_status}")
+                logger.info(f"✅ Twilio Call erfolgreich gestartet!")
+                logger.info(f"📞 Call SID: {call.sid}")
+                logger.info(f"📊 Status: {call.status}")
                 logger.info(f"{'='*70}\n")
                 
                 # Response zurück an HOC
                 return jsonify({
                     "status": "success",
-                    "method": "sip_trunk_call",
-                    "message": "Outbound call initiated successfully",
+                    "method": "twilio_outbound",
+                    "message": "Twilio outbound call initiated successfully",
                     "data": {
                         "campaign_id": campaign_id,
                         "candidate": f"{first_name} {last_name}",
                         "company": company_name,
                         "to_number": to_number,
-                        "conversation_id": conversation_id,
-                        "call_status": call_status,
+                        "call_sid": call.sid,
+                        "call_status": call.status,
                         "questionnaire_loaded": bool(questionnaire),
                         "timestamp": datetime.now().isoformat(),
                         "prompt_length": len(enhanced_prompt),
@@ -472,10 +487,10 @@ def trigger_outbound_call():
                 }), 200
                 
             except Exception as api_error:
-                logger.error(f"❌ ElevenLabs API Error: {api_error}", exc_info=True)
+                logger.error(f"❌ Twilio API Error: {api_error}", exc_info=True)
                 return jsonify({
                     "status": "error",
-                    "error": "API call failed",
+                    "error": "Twilio call failed",
                     "message": str(api_error),
                     "timestamp": datetime.now().isoformat()
                 }), 500
@@ -804,6 +819,78 @@ def twilio_personalization():
                 }
             }
         }), 200
+
+
+@app.route('/webhook/twilio-twiml', methods=['POST'])
+def twilio_twiml():
+    """
+    TwiML Endpoint für Twilio Outbound Calls
+    Generiert TwiML das den Call zu ElevenLabs mit Personalisierung weiterleitet
+    """
+    try:
+        from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
+        
+        # Hole Parameter aus Query String
+        campaign_id = int(request.args.get('campaign_id', 804))
+        first_name = request.args.get('first_name', 'Kandidat')
+        last_name = request.args.get('last_name', '')
+        company_name = request.args.get('company_name', 'Unser Unternehmen')
+        
+        logger.info(f"\n📞 TwiML Request für: {first_name} {last_name} (Campaign {campaign_id})")
+        
+        # Hole Questionnaire
+        questionnaire = fetch_questionnaire_context(campaign_id)
+        
+        # Baue Enhanced Prompt
+        enhanced_prompt = build_enhanced_prompt(
+            questionnaire=questionnaire,
+            company_name=company_name,
+            first_name=first_name,
+            last_name=last_name
+        )
+        
+        # Baue First Message
+        campaign_location = (
+            questionnaire.get('campaignlocation_label', '') or 
+            questionnaire.get('work_location', '') or 
+            'Berlin'
+        )
+        first_message = build_first_message(company_name, first_name, last_name, campaign_location)
+        
+        # Erstelle TwiML Response
+        response = VoiceResponse()
+        
+        # Verbinde zu ElevenLabs mit <Stream>
+        connect = Connect()
+        
+        # ElevenLabs WebSocket URL
+        stream = Stream(
+            url=f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={Config.ELEVENLABS_AGENT_ID}",
+            track='both_tracks'
+        )
+        
+        # WICHTIG: Wir können hier leider NICHT conversation_config_override senden
+        # Das Stream-Element unterstützt keine Parameter!
+        # Daher nutzen wir den Twilio Personalization Webhook (für EINGEHENDE Calls)
+        
+        connect.append(stream)
+        response.append(connect)
+        
+        logger.info(f"✅ TwiML generiert für ElevenLabs Agent")
+        
+        return str(response), 200, {'Content-Type': 'text/xml'}
+        
+    except Exception as e:
+        logger.error(f"❌ Fehler in TwiML Generation: {e}", exc_info=True)
+        
+        # Fallback TwiML
+        response = VoiceResponse()
+        response.say(
+            "Es tut mir leid, es gab einen technischen Fehler. Bitte versuchen Sie es später erneut.",
+            voice='Polly.Vicki',
+            language='de-DE'
+        )
+        return str(response), 200, {'Content-Type': 'text/xml'}
 
 
 @app.route('/webhook/twilio-status', methods=['POST'])
