@@ -9,8 +9,6 @@ import json
 from urllib.parse import urlencode
 from flask import Flask, request, jsonify
 from elevenlabs import ElevenLabs
-from elevenlabs.environment import ElevenLabsEnvironment
-from elevenlabs.types.conversation_initiation_client_data_request_input import ConversationInitiationClientDataRequestInput
 from config import Config
 import requests
 from datetime import datetime
@@ -28,10 +26,10 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 app = Flask(__name__)
 
-# ElevenLabs Client mit EU Environment
+# ElevenLabs Client mit EU Base URL (für Twilio Outbound Calls)
 client = ElevenLabs(
     api_key=Config.ELEVENLABS_API_KEY,
-    environment=ElevenLabsEnvironment.PRODUCTION_EU
+    base_url="https://api.eu.residency.elevenlabs.io"
 )
 
 
@@ -427,37 +425,33 @@ def trigger_outbound_call():
                 # Baue Questionnaire-Kontext für Dynamic Variables
                 questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
                 
-                # Erstelle ConversationInitiationClientDataRequestInput
-                # mit Dynamic Variables UND conversation_config_override
-                client_data = ConversationInitiationClientDataRequestInput(
-                    dynamic_variables={
-                        "candidatefirst_name": first_name,
-                        "candidatelast_name": last_name,
-                        "companyname": company_name,
-                        "questionnaire_context": questionnaire_context
-                    },
-                    conversation_config_override={
-                        "agent": {
-                            "prompt": {
-                                "prompt": enhanced_prompt  # ← Überschreibt Dashboard-Prompt!
-                            },
-                            "first_message": first_message,  # ← Überschreibt Dashboard First Message!
-                            "language": "de"
-                        }
-                    }
-                )
-                
                 logger.info(f"📝 Enhanced Prompt: {len(enhanced_prompt)} Zeichen")
                 logger.info(f"💬 First Message: {first_message[:80]}...")
                 logger.info(f"📊 Questionnaire Context: {len(questionnaire_context)} Zeichen")
                 logger.info(f"🔢 Dynamic Variables: candidatefirst_name, candidatelast_name, companyname, questionnaire_context")
                 
-                # WICHTIG: Nutze twilio.outbound_call statt sip_trunk.outbound_call!
+                # WICHTIG: Nutze twilio.outbound_call mit DIRECT DICT (wie im funktionierenden Test!)
                 response = client.conversational_ai.twilio.outbound_call(
                     agent_id=Config.ELEVENLABS_AGENT_ID,
-                    to_number=to_number,
                     agent_phone_number_id=agent_phone_number_id,
-                    conversation_initiation_client_data=client_data
+                    to_number=to_number,
+                    conversation_initiation_client_data={
+                        "dynamic_variables": {
+                            "candidatefirst_name": first_name,
+                            "candidatelast_name": last_name,
+                            "companyname": company_name,
+                            "questionnaire_context": questionnaire_context
+                        },
+                        "conversation_config_override": {
+                            "agent": {
+                                "prompt": {
+                                    "prompt": enhanced_prompt
+                                },
+                                "first_message": first_message,
+                                "language": "de"
+                            }
+                        }
+                    }
                 )
                 
                 # Parse Response
