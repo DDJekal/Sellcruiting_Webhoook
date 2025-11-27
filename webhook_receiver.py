@@ -184,6 +184,283 @@ Du führst ein Gespräch mit {first_name} {last_name}."""
     return final_prompt
 
 
+def extract_company_size(questionnaire: dict) -> str:
+    """
+    Extrahiert Mitarbeiterzahl aus Questionnaire
+    
+    Args:
+        questionnaire: Questionnaire-Daten aus HOC
+        
+    Returns:
+        Mitarbeiterzahl als String (z.B. "ca. 120 Mitarbeitende") oder ""
+    """
+    try:
+        # Suche in onboarding -> pages -> prompts
+        if questionnaire.get('onboarding') and questionnaire['onboarding'].get('pages'):
+            for page in questionnaire['onboarding']['pages']:
+                if page.get('prompts'):
+                    for prompt in page['prompts']:
+                        question = prompt.get('question', '').lower()
+                        answer = prompt.get('answer', '')
+                        
+                        # Suche nach Mitarbeiterzahl-Frage
+                        if 'mitarbeitende' in question or 'mitarbeiter' in question or 'beschäftigte' in question:
+                            if answer:
+                                return answer
+        
+        # Fallback: Suche in anderen Feldern
+        if questionnaire.get('company_size'):
+            return questionnaire['company_size']
+            
+        return ""
+    except Exception as e:
+        logger.warning(f"⚠️ Fehler beim Extrahieren der Mitarbeiterzahl: {e}")
+        return ""
+
+
+def extract_company_pitch(questionnaire: dict) -> str:
+    """
+    Extrahiert USP und Zielgruppe als Pitch
+    
+    Args:
+        questionnaire: Questionnaire-Daten aus HOC
+        
+    Returns:
+        Company Pitch als String oder ""
+    """
+    try:
+        pitch_parts = []
+        
+        # Suche in onboarding -> pages -> prompts
+        if questionnaire.get('onboarding') and questionnaire['onboarding'].get('pages'):
+            for page in questionnaire['onboarding']['pages']:
+                if page.get('prompts'):
+                    for prompt in page['prompts']:
+                        question = prompt.get('question', '').lower()
+                        answer = prompt.get('answer', '')
+                        
+                        # USP: "Was unterscheidet..."
+                        if 'unterscheidet' in question or 'alleinstellungsmerkmal' in question:
+                            if answer:
+                                pitch_parts.append(answer)
+                        
+                        # Zielgruppe: "Wer ist die Zielgruppe..."
+                        if 'zielgruppe' in question:
+                            if answer:
+                                pitch_parts.append(answer)
+        
+        # Kombiniere zu einem Pitch
+        if pitch_parts:
+            return ". ".join(pitch_parts)
+        
+        # Fallback
+        if questionnaire.get('company_description'):
+            return questionnaire['company_description']
+            
+        return ""
+    except Exception as e:
+        logger.warning(f"⚠️ Fehler beim Extrahieren des Company Pitch: {e}")
+        return ""
+
+
+def extract_location(questionnaire: dict) -> str:
+    """
+    Extrahiert Standort aus Questionnaire
+    
+    Args:
+        questionnaire: Questionnaire-Daten aus HOC
+        
+    Returns:
+        Standort als String (z.B. "München-Schwabing") oder ""
+    """
+    try:
+        # Priorität 1: campaignlocation_label (direktes Feld)
+        if questionnaire.get('campaignlocation_label'):
+            return questionnaire['campaignlocation_label']
+        
+        # Priorität 2: work_location + postal_code
+        if questionnaire.get('work_location'):
+            location = questionnaire['work_location']
+            if questionnaire.get('work_location_postal_code'):
+                return f"{location} {questionnaire['work_location_postal_code']}"
+            return location
+        
+        # Priorität 3: Suche in transcript -> "Standort: ..."
+        if questionnaire.get('transcript') and questionnaire['transcript'].get('pages'):
+            for page in questionnaire['transcript']['pages']:
+                if page.get('prompts'):
+                    for prompt in page['prompts']:
+                        question = prompt.get('question', '')
+                        
+                        # Suche nach "Standort: ..."
+                        if question.startswith('Standort:') or question.startswith('AP:'):
+                            # Extrahiere den Standort nach dem Doppelpunkt
+                            location = question.split(':', 1)[1].strip()
+                            if location:
+                                return location
+        
+        # Fallback: location Feld
+        if questionnaire.get('location'):
+            return questionnaire['location']
+            
+        return ""
+    except Exception as e:
+        logger.warning(f"⚠️ Fehler beim Extrahieren des Standorts: {e}")
+        return ""
+
+
+def extract_priorities(questionnaire: dict) -> str:
+    """
+    Leitet Prioritäten aus MUSS-Kriterien und Rahmenbedingungen ab
+    
+    Args:
+        questionnaire: Questionnaire-Daten aus HOC
+        
+    Returns:
+        Prioritäten als String (z.B. "Psychiatrische Pflege, Nacht- und Wechselschicht") oder ""
+    """
+    try:
+        priorities = []
+        
+        # Suche in transcript -> pages
+        if questionnaire.get('transcript') and questionnaire['transcript'].get('pages'):
+            for page in questionnaire['transcript']['pages']:
+                page_name = page.get('name', '').lower()
+                
+                # Nur relevante Seiten durchsuchen
+                if 'kriterien' in page_name or 'rahmenbedingungen' in page_name:
+                    if page.get('prompts'):
+                        for prompt in page['prompts']:
+                            question = prompt.get('question', '')
+                            
+                            # Extrahiere relevante Prioritäten (nicht technische Details)
+                            # Ignoriere: Blacklist, AP, technische Anforderungen
+                            if any(skip in question.lower() for skip in ['blacklist', 'ap:', 'standort:']):
+                                continue
+                            
+                            # Wenn es eine "Zwingend:" Anforderung ist
+                            if 'zwingend:' in question.lower():
+                                # Extrahiere den Teil nach "Zwingend:"
+                                priority = question.split(':', 1)[1].strip() if ':' in question else question
+                                if priority and len(priority) < 100:  # Nur kurze, prägnante Prioritäten
+                                    priorities.append(priority)
+                            
+                            # Arbeitszeitmodelle als Priorität
+                            elif any(keyword in question.lower() for keyword in ['vollzeit', 'teilzeit', 'schicht']):
+                                if len(question) < 100:
+                                    priorities.append(question)
+        
+        # Kombiniere Prioritäten (max. 3-4)
+        if priorities:
+            return ", ".join(priorities[:4])
+        
+        # Fallback: Suche in questions Array
+        if questionnaire.get('questions'):
+            for q in questionnaire['questions']:
+                if q.get('priority') == 1:  # MUSS-Kriterium
+                    question_text = q.get('question', '')
+                    if question_text and len(question_text) < 100:
+                        priorities.append(question_text)
+                        if len(priorities) >= 3:
+                            break
+            
+            if priorities:
+                return ", ".join(priorities)
+        
+        return ""
+    except Exception as e:
+        logger.warning(f"⚠️ Fehler beim Extrahieren der Prioritäten: {e}")
+        return ""
+
+
+def build_questions_list(questionnaire: dict) -> str:
+    """
+    Erstellt strukturierte Fragenliste für Phase 3 (Dashboard)
+    
+    Args:
+        questionnaire: Questionnaire-Daten aus HOC
+        
+    Returns:
+        Formatierte Fragenliste als String
+    """
+    try:
+        questions_text = "=== FRAGEN FÜR PHASE 3 ===\n\n"
+        
+        if questionnaire.get('questions'):
+            questions = questionnaire['questions']
+            
+            # Gruppiere nach Kategorien
+            must_questions = [q for q in questions if q.get('priority') == 1]
+            optional_questions = [q for q in questions if q.get('priority') == 2]
+            
+            if must_questions:
+                questions_text += "MUSS-FRAGEN:\n"
+                for i, q in enumerate(must_questions, 1):
+                    question_text = q.get('question', '')
+                    context = q.get('context', '')
+                    questions_text += f"{i}. {question_text}\n"
+                    if context:
+                        questions_text += f"   (Hinweis: {context})\n"
+                questions_text += "\n"
+            
+            if optional_questions:
+                questions_text += "ZUSÄTZLICHE FRAGEN:\n"
+                for i, q in enumerate(optional_questions, 1):
+                    question_text = q.get('question', '')
+                    questions_text += f"{i}. {question_text}\n"
+        
+        return questions_text
+    except Exception as e:
+        logger.warning(f"⚠️ Fehler beim Erstellen der Fragenliste: {e}")
+        return ""
+
+
+def extract_dynamic_variables(questionnaire: dict, company_name: str, first_name: str, last_name: str) -> dict:
+    """
+    Extrahiert alle Dynamic Variables aus dem HOC Questionnaire
+    für ElevenLabs Dashboard-Workflows
+    
+    Args:
+        questionnaire: Questionnaire-Daten aus HOC
+        company_name: Firmenname
+        first_name: Vorname Kandidat
+        last_name: Nachname Kandidat
+        
+    Returns:
+        Dict mit allen Dynamic Variables für ElevenLabs
+    """
+    logger.info("🔍 Extrahiere Dynamic Variables aus Questionnaire...")
+    
+    # BASIS-VARIABLEN (immer vorhanden)
+    variables = {
+        "candidatefirst_name": first_name,
+        "candidatelast_name": last_name,
+        "companyname": company_name
+    }
+    
+    # EXTRAHIERE VARIABLEN
+    variables["companysize"] = extract_company_size(questionnaire)
+    variables["companypitch"] = extract_company_pitch(questionnaire)
+    variables["campaignlocation_label"] = extract_location(questionnaire)
+    variables["companypriorities"] = extract_priorities(questionnaire)
+    
+    # CAMPAIGN-METADATEN (falls vorhanden)
+    variables["campaignrole_title"] = questionnaire.get('campaignrole_title', '') or questionnaire.get('job_title', '') or 'Ihre Position'
+    
+    # KONTEXT-VARIABLEN (strukturiert)
+    variables["questionnaire_context"] = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
+    variables["questions"] = build_questions_list(questionnaire)
+    
+    # Log welche Variablen gefüllt wurden
+    filled_vars = [k for k, v in variables.items() if v]
+    logger.info(f"✅ {len(filled_vars)}/{len(variables)} Dynamic Variables gefüllt:")
+    for var in filled_vars:
+        value_preview = str(variables[var])[:50]
+        logger.info(f"   • {var}: {value_preview}...")
+    
+    return variables
+
+
 def build_questionnaire_context(questionnaire: dict, company_name: str, first_name: str, last_name: str) -> str:
     """
     Erstellt Questionnaire-Kontext als formatierten Text
@@ -422,35 +699,23 @@ def trigger_outbound_call():
             logger.info(f"{'='*70}")
             
             try:
-                # Baue Questionnaire-Kontext für Dynamic Variables
-                questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
+                # ✨ NEU: Extrahiere ALLE Dynamic Variables aus Questionnaire
+                dynamic_vars = extract_dynamic_variables(questionnaire, company_name, first_name, last_name)
                 
-                logger.info(f"📝 Enhanced Prompt: {len(enhanced_prompt)} Zeichen")
-                logger.info(f"💬 First Message: {first_message[:80]}...")
-                logger.info(f"📊 Questionnaire Context: {len(questionnaire_context)} Zeichen")
-                logger.info(f"🔢 Dynamic Variables: candidatefirst_name, candidatelast_name, companyname, questionnaire_context")
+                logger.info(f"📊 {len(dynamic_vars)} Dynamic Variables extrahiert:")
+                for key in dynamic_vars.keys():
+                    value_preview = str(dynamic_vars[key])[:50] if dynamic_vars[key] else "(leer)"
+                    logger.info(f"   • {key}: {value_preview}...")
                 
-                # WICHTIG: Nutze twilio.outbound_call mit DIRECT DICT (wie im funktionierenden Test!)
+                # WICHTIG: Nutze twilio.outbound_call mit DIRECT DICT
+                # OPTION A: Nur Dynamic Variables (Dashboard-Workflows werden genutzt!)
                 response = client.conversational_ai.twilio.outbound_call(
                     agent_id=Config.ELEVENLABS_AGENT_ID,
                     agent_phone_number_id=agent_phone_number_id,
                     to_number=to_number,
                     conversation_initiation_client_data={
-                        "dynamic_variables": {
-                            "candidatefirst_name": first_name,
-                            "candidatelast_name": last_name,
-                            "companyname": company_name,
-                            "questionnaire_context": questionnaire_context
-                        },
-                        "conversation_config_override": {
-                            "agent": {
-                                "prompt": {
-                                    "prompt": enhanced_prompt
-                                },
-                                "first_message": first_message,
-                                "language": "de"
-                            }
-                        }
+                        "dynamic_variables": dynamic_vars
+                        # KEIN conversation_config_override → Dashboard-Workflows bleiben aktiv!
                     }
                 )
                 
@@ -467,7 +732,7 @@ def trigger_outbound_call():
                 return jsonify({
                     "status": "success",
                     "method": "twilio_outbound_call",
-                    "message": "Twilio outbound call initiated successfully with full personalization",
+                    "message": "Twilio outbound call initiated successfully with Dashboard Workflows + Dynamic Variables",
                     "data": {
                         "campaign_id": campaign_id,
                         "candidate": f"{first_name} {last_name}",
@@ -477,9 +742,10 @@ def trigger_outbound_call():
                         "call_status": call_status,
                         "questionnaire_loaded": bool(questionnaire),
                         "timestamp": datetime.now().isoformat(),
-                        "prompt_length": len(enhanced_prompt),
-                        "first_message": first_message,
-                        "dynamic_variables_filled": True
+                        "dynamic_variables_count": len(dynamic_vars),
+                        "dynamic_variables_filled": list(dynamic_vars.keys()),
+                        "workflow_mode": "dashboard_workflows",
+                        "note": "Using ElevenLabs Dashboard Workflows with injected Dynamic Variables"
                     }
                 }), 200
                 
@@ -502,31 +768,34 @@ def trigger_outbound_call():
             logger.info("ℹ️  WebRTC Links nutzen Dashboard-Konfiguration mit Dynamic Variables")
             
             try:
-                # Baue Questionnaire-Kontext für Dynamic Variables
-                questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
+                # ✨ NEU: Extrahiere ALLE Dynamic Variables aus Questionnaire
+                dynamic_vars_full = extract_dynamic_variables(questionnaire, company_name, first_name, last_name)
                 
                 # Füge Dynamic Variables als URL-Parameter hinzu
                 # WICHTIG: var_ Prefix für ElevenLabs Public Talk-to Page!
                 # Siehe: https://elevenlabs.io/docs/agents-platform/customization/personalization/dynamic-variables
                 dynamic_vars = {
                     'agent_id': Config.ELEVENLABS_AGENT_ID,
-                    'var_candidatefirst_name': first_name,      # var_ Prefix!
-                    'var_candidatelast_name': last_name,        # var_ Prefix!
-                    'var_companyname': company_name,            # var_ Prefix!
-                    'var_questionnaire_context': questionnaire_context  # var_ Prefix!
                 }
+                
+                # Füge alle Variablen mit var_ Prefix hinzu
+                for key, value in dynamic_vars_full.items():
+                    if value:  # Nur gefüllte Variablen
+                        # Kürze große Variablen für URL (questionnaire_context, questions)
+                        if key in ['questionnaire_context', 'questions'] and len(str(value)) > 500:
+                            value = str(value)[:500] + "..."
+                        dynamic_vars[f'var_{key}'] = value
                 
                 # Baue BROWSER-URL für ElevenLabs Public Talk-to Page
                 param_string = urlencode(dynamic_vars)
                 browser_url = f"https://elevenlabs.io/app/talk-to?{param_string}"
                 
                 logger.info(f"✅ WebRTC Browser-Link mit Dynamic Variables erstellt!")
-                logger.info(f"📊 Dynamic Variables gefüllt (var_ Prefix):")
+                logger.info(f"📊 Dynamic Variables gefüllt: {len([k for k in dynamic_vars.keys() if k.startswith('var_')])}")
                 logger.info(f"   • agent_id: {Config.ELEVENLABS_AGENT_ID}")
-                logger.info(f"   • var_candidatefirst_name: {first_name}")
-                logger.info(f"   • var_candidatelast_name: {last_name}")
-                logger.info(f"   • var_companyname: {company_name}")
-                logger.info(f"   • var_questionnaire_context: {len(questionnaire_context)} Zeichen")
+                for key in sorted([k for k in dynamic_vars.keys() if k.startswith('var_')]):
+                    value_preview = str(dynamic_vars[key])[:40] if dynamic_vars[key] else "(leer)"
+                    logger.info(f"   • {key}: {value_preview}...")
                 logger.info(f"🔗 Browser URL: {browser_url[:120]}...")
                 logger.info(f"📏 URL-Länge: {len(browser_url)} Zeichen")
                 logger.info(f"{'='*70}\n")
