@@ -15,6 +15,7 @@ class Config:
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
     CURSOR_API_KEY = os.getenv("CURSOR_API_KEY")
     ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # Für AI-basierte Variable-Extraktion
     
     # HIRINGS API Configuration (von HOC)
     HIRINGS_API_URL = os.getenv("HIRINGS_API_URL")

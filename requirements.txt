@@ -4,6 +4,9 @@ elevenlabs>=1.0.0
 # Twilio SDK (für Twilio Personalization)
 twilio>=9.0.0
 
+# OpenAI SDK (für AI-basierte Variable-Extraktion)
+openai>=1.0.0
+
 # HTTP Requests
 requests>=2.31.0
 

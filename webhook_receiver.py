@@ -13,6 +13,7 @@ from config import Config
 import requests
 from datetime import datetime
 import logging
+from openai import OpenAI
 
 # Setup Logging
 logging.basicConfig(
@@ -31,6 +32,120 @@ client = ElevenLabs(
     api_key=Config.ELEVENLABS_API_KEY,
     base_url="https://api.eu.residency.elevenlabs.io"
 )
+
+# OpenAI Client konfigurieren
+openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
+
+
+def extract_with_ai(questions: list, variable_name: str) -> str:
+    """
+    Nutzt OpenAI GPT-4o-mini, um eine Dynamic Variable aus Fragen zu extrahieren
+    
+    Args:
+        questions: Liste der Fragen aus HOC
+        variable_name: Name der zu extrahierenden Variable
+        
+    Returns:
+        Extrahierter Wert als String oder ""
+    """
+    
+    if not questions or not Config.OPENAI_API_KEY:
+        return ""
+    
+    # Formatiere Fragen für AI
+    questions_text = "\n".join([
+        f"- {q.get('question', '')} (Priority: {q.get('priority', 'N/A')}, Group: {q.get('group', 'N/A')}, Context: {q.get('context', 'N/A')})"
+        for q in questions
+    ])
+    
+    # Prompts pro Variable
+    prompts = {
+        "campaignlocation_label": f"""
+Analysiere diese Recruiting-Fragen und extrahiere NUR den ARBEITSORT (Stadt/Stadtteil):
+
+{questions_text}
+
+WICHTIG:
+- Gib NUR die Stadt oder den Stadtteil zurück (z.B. "Berlin-Hellersdorf" oder "München")
+- NICHT die komplette Adresse mit Straße und Hausnummer
+- Falls mehrere Standorte: Wähle den Hauptstandort
+- Falls kein Standort erkennbar: Antworte mit einem leeren String
+
+Beispiel:
+Frage: "Unser Standort ist Kita Springmäuse, Stollberger Straße 25-27, 12627 Berlin."
+Antwort: "Berlin"
+
+Frage: "Der Arbeitsort ist München-Schwabing, Leopoldstraße 50."
+Antwort: "München-Schwabing"
+""",
+        
+        "companypriorities": f"""
+Analysiere diese Recruiting-Fragen und extrahiere die TOP 3-4 WICHTIGSTEN ANFORDERUNGEN/PRIORITÄTEN:
+
+{questions_text}
+
+Fokus auf:
+- Qualifikationen mit Priority=1 oder "Muss-Kriterium" im Context
+- Arbeitszeitmodelle (Vollzeit/Teilzeit)
+- Zentrale fachliche Anforderungen
+
+Format: Kommaseparierte Liste (z.B. "Deutschkenntnisse B2, mehrjährige Berufserfahrung, Vollzeit 39h")
+Falls keine klaren Prioritäten erkennbar: Antworte mit einem leeren String
+""",
+        
+        "companysize": f"""
+Analysiere diese Recruiting-Fragen und extrahiere die UNTERNEHMENSGRÖSSE:
+
+{questions_text}
+
+Suche nach Hinweisen auf:
+- Anzahl Mitarbeitende
+- Größe des Unternehmens
+
+Falls gefunden: Gib zurück im Format "ca. X Mitarbeitende" oder "X Mitarbeiter"
+Falls nicht gefunden: Antworte mit einem leeren String
+""",
+        
+        "companypitch": f"""
+Analysiere diese Recruiting-Fragen und erstelle einen KURZEN COMPANY PITCH (1-2 Sätze):
+
+{questions_text}
+
+Erstelle basierend auf erkennbaren Informationen (Branche, Besonderheiten, Benefits) einen professionellen Pitch.
+Falls zu wenig Information verfügbar: Antworte mit einem leeren String
+"""
+    }
+    
+    prompt = prompts.get(variable_name, "")
+    if not prompt:
+        return ""
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Du bist ein Experte für Recruiting-Datenextraktion. Antworte präzise, kurz und direkt. Keine Erklärungen, nur das Ergebnis."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=150,
+            timeout=10
+        )
+        
+        result = response.choices[0].message.content.strip()
+        
+        # Entferne Anführungszeichen falls vorhanden
+        result = result.strip('"').strip("'")
+        
+        logger.info(f"✅ AI-Extraktion für {variable_name}: {result[:50]}...")
+        return result
+        
+    except Exception as e:
+        logger.warning(f"⚠️ AI-Extraktion für {variable_name} fehlgeschlagen: {e}")
+        return ""
 
 
 def require_api_key(f):
@@ -184,193 +299,171 @@ Du führst ein Gespräch mit {first_name} {last_name}."""
     return final_prompt
 
 
-def extract_company_size(questionnaire: dict) -> str:
+def extract_variable_with_ai(questions: list, variable_name: str) -> str:
     """
-    Extrahiert Mitarbeiterzahl aus Questionnaire
+    Nutzt OpenAI GPT-4o-mini, um eine Dynamic Variable aus den Fragen zu extrahieren
     
     Args:
-        questionnaire: Questionnaire-Daten aus HOC
+        questions: Liste von Fragen aus HOC Questionnaire
+        variable_name: Name der zu extrahierenden Variable
         
     Returns:
-        Mitarbeiterzahl als String (z.B. "ca. 120 Mitarbeitende") oder ""
+        Extrahierter Wert als String oder "" falls nicht extrahierbar
     """
     try:
-        # Suche in onboarding -> pages -> prompts
-        if questionnaire.get('onboarding') and questionnaire['onboarding'].get('pages'):
-            for page in questionnaire['onboarding']['pages']:
-                if page.get('prompts'):
-                    for prompt in page['prompts']:
-                        question = prompt.get('question', '').lower()
-                        answer = prompt.get('answer', '')
-                        
-                        # Suche nach Mitarbeiterzahl-Frage
-                        if 'mitarbeitende' in question or 'mitarbeiter' in question or 'beschäftigte' in question:
-                            if answer:
-                                return answer
+        # Setze OpenAI API Key
+        openai.api_key = Config.OPENAI_API_KEY
         
-        # Fallback: Suche in anderen Feldern
-        if questionnaire.get('company_size'):
-            return questionnaire['company_size']
+        if not openai.api_key:
+            logger.warning("⚠️ OpenAI API Key nicht konfiguriert - AI-Extraktion übersprungen")
+            return ""
+        
+        # Formatiere Fragen für AI
+        questions_text = "\n".join([
+            f"- Frage: {q.get('question', '')}\n  Gruppe: {q.get('group', 'N/A')}\n  Priority: {q.get('priority', 'N/A')}\n  Context: {q.get('context', 'N/A')}"
+            for q in questions
+        ])
+        
+        # AI-Prompts pro Variable
+        prompts = {
+            "campaignlocation_label": f"""Analysiere diese Recruiting-Fragen und extrahiere den ARBEITSORT/STANDORT:
+
+{questions_text}
+
+WICHTIG: Extrahiere NUR den ORT/DIE STADT (z.B. "Berlin", "München-Schwabing", "Hamburg-Altona").
+NICHT die komplette Adresse mit Straße und Hausnummer!
+
+Beispiele:
+- "Unser Standort ist Kita Springmäuse, Stollberger Straße 25-27, 12627 Berlin" → "Berlin"
+- "Der Arbeitsort ist München-Schwabing, Leopoldstraße 123" → "München-Schwabing"
+- "Arbeiten Sie in Hamburg-Altona?" → "Hamburg-Altona"
+
+Antworte NUR mit dem Ort, ohne Erklärung.
+Falls kein Standort erkennbar: Antworte mit einem leeren String.""",
             
-        return ""
+            "companypriorities": f"""Analysiere diese Recruiting-Fragen und identifiziere die TOP 3-4 MUSS-KRITERIEN oder PRIORITÄTEN:
+
+{questions_text}
+
+Fokus auf:
+- Fragen mit Priority=1 (Muss-Kriterien)
+- Context-Felder mit "Muss-Kriterium:"
+- Qualifikationen und Abschlüsse
+- Arbeitszeitmodelle (Vollzeit/Teilzeit)
+
+Gib die Prioritäten als kommaseparierte Liste zurück (max. 4 Items).
+Format: "Kriterium 1, Kriterium 2, Kriterium 3"
+
+Beispiel: "Deutschkenntnisse B2, mehrjährige Berufserfahrung, staatlich anerkannter Abschluss, Vollzeit 39h"
+
+Falls keine klaren Prioritäten: Antworte mit einem leeren String.""",
+            
+            "companysize": f"""Analysiere diese Recruiting-Fragen und extrahiere die UNTERNEHMENSGRÖSSE (Mitarbeiterzahl):
+
+{questions_text}
+
+Suche nach Angaben zur Mitarbeiterzahl oder Unternehmensgröße.
+
+Beispiele:
+- "Wir sind ein Unternehmen mit 120 Mitarbeitenden" → "120 Mitarbeitende"
+- "Unser Team hat ca. 50 Mitarbeiter" → "ca. 50 Mitarbeiter"
+
+Falls keine Angabe vorhanden: Antworte mit einem leeren String.""",
+            
+            "companypitch": f"""Analysiere diese Recruiting-Fragen und erstelle einen kurzen COMPANY PITCH (2-3 Sätze):
+
+{questions_text}
+
+Erstelle basierend auf erkennbaren Informationen (Branche, Besonderheiten, Benefits, Arbeitszeitmodelle) einen professionellen Pitch.
+
+Format: 2-3 prägnante Sätze
+Stil: Professionell und einladend
+
+Falls zu wenig Information erkennbar: Antworte mit einem leeren String."""
+        }
+        
+        # Hole Prompt für die Variable
+        prompt = prompts.get(variable_name, "")
+        if not prompt:
+            logger.warning(f"⚠️ Kein AI-Prompt für Variable '{variable_name}' definiert")
+            return ""
+        
+        logger.info(f"🤖 Starte AI-Extraktion für: {variable_name}")
+        
+        # OpenAI API Call
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",  # Schnell & günstig (~$0.15/1M tokens)
+            messages=[
+                {"role": "system", "content": "Du bist ein Experte für Recruiting-Datenextraktion. Antworte präzise, kurz und ohne Erklärungen."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,  # Deterministisch
+            max_tokens=150,
+            timeout=10
+        )
+        
+        result = response.choices[0].message.content.strip()
+        
+        # Bereinige Ergebnis
+        if result.lower() in ['', 'nicht vorhanden', 'keine angabe', 'n/a', 'null', 'none']:
+            result = ""
+        
+        logger.info(f"✅ AI-Extraktion für {variable_name}: {result[:100] if result else '(leer)'}...")
+        
+        return result
+        
     except Exception as e:
-        logger.warning(f"⚠️ Fehler beim Extrahieren der Mitarbeiterzahl: {e}")
+        logger.error(f"❌ AI-Extraktion für {variable_name} fehlgeschlagen: {e}")
         return ""
+
+
+def extract_company_size(questionnaire: dict) -> str:
+    """
+    Extrahiert Mitarbeiterzahl - AI-basiert aus questions Array
+    """
+    questions = questionnaire.get('questions', [])
+    if not questions:
+        return ""
+    
+    return extract_variable_with_ai(questions, "companysize")
 
 
 def extract_company_pitch(questionnaire: dict) -> str:
     """
-    Extrahiert USP und Zielgruppe als Pitch
-    
-    Args:
-        questionnaire: Questionnaire-Daten aus HOC
-        
-    Returns:
-        Company Pitch als String oder ""
+    Extrahiert Company Pitch - AI-basiert aus questions Array
     """
-    try:
-        pitch_parts = []
-        
-        # Suche in onboarding -> pages -> prompts
-        if questionnaire.get('onboarding') and questionnaire['onboarding'].get('pages'):
-            for page in questionnaire['onboarding']['pages']:
-                if page.get('prompts'):
-                    for prompt in page['prompts']:
-                        question = prompt.get('question', '').lower()
-                        answer = prompt.get('answer', '')
-                        
-                        # USP: "Was unterscheidet..."
-                        if 'unterscheidet' in question or 'alleinstellungsmerkmal' in question:
-                            if answer:
-                                pitch_parts.append(answer)
-                        
-                        # Zielgruppe: "Wer ist die Zielgruppe..."
-                        if 'zielgruppe' in question:
-                            if answer:
-                                pitch_parts.append(answer)
-        
-        # Kombiniere zu einem Pitch
-        if pitch_parts:
-            return ". ".join(pitch_parts)
-        
-        # Fallback
-        if questionnaire.get('company_description'):
-            return questionnaire['company_description']
-            
+    questions = questionnaire.get('questions', [])
+    if not questions:
         return ""
-    except Exception as e:
-        logger.warning(f"⚠️ Fehler beim Extrahieren des Company Pitch: {e}")
-        return ""
+    
+    return extract_variable_with_ai(questions, "companypitch")
 
 
 def extract_location(questionnaire: dict) -> str:
     """
-    Extrahiert Standort aus Questionnaire
-    
-    Args:
-        questionnaire: Questionnaire-Daten aus HOC
-        
-    Returns:
-        Standort als String (z.B. "München-Schwabing") oder ""
+    Extrahiert Standort (NUR ORT/STADT) - AI-basiert aus questions Array
     """
-    try:
-        # Priorität 1: campaignlocation_label (direktes Feld)
+    questions = questionnaire.get('questions', [])
+    if not questions:
+        # Fallback: Direkte Felder prüfen
         if questionnaire.get('campaignlocation_label'):
             return questionnaire['campaignlocation_label']
-        
-        # Priorität 2: work_location + postal_code
         if questionnaire.get('work_location'):
-            location = questionnaire['work_location']
-            if questionnaire.get('work_location_postal_code'):
-                return f"{location} {questionnaire['work_location_postal_code']}"
-            return location
-        
-        # Priorität 3: Suche in transcript -> "Standort: ..."
-        if questionnaire.get('transcript') and questionnaire['transcript'].get('pages'):
-            for page in questionnaire['transcript']['pages']:
-                if page.get('prompts'):
-                    for prompt in page['prompts']:
-                        question = prompt.get('question', '')
-                        
-                        # Suche nach "Standort: ..."
-                        if question.startswith('Standort:') or question.startswith('AP:'):
-                            # Extrahiere den Standort nach dem Doppelpunkt
-                            location = question.split(':', 1)[1].strip()
-                            if location:
-                                return location
-        
-        # Fallback: location Feld
-        if questionnaire.get('location'):
-            return questionnaire['location']
-            
+            return questionnaire['work_location']
         return ""
-    except Exception as e:
-        logger.warning(f"⚠️ Fehler beim Extrahieren des Standorts: {e}")
-        return ""
+    
+    return extract_variable_with_ai(questions, "campaignlocation_label")
 
 
 def extract_priorities(questionnaire: dict) -> str:
     """
-    Leitet Prioritäten aus MUSS-Kriterien und Rahmenbedingungen ab
-    
-    Args:
-        questionnaire: Questionnaire-Daten aus HOC
-        
-    Returns:
-        Prioritäten als String (z.B. "Psychiatrische Pflege, Nacht- und Wechselschicht") oder ""
+    Extrahiert Prioritäten aus MUSS-Kriterien - AI-basiert aus questions Array
     """
-    try:
-        priorities = []
-        
-        # Suche in transcript -> pages
-        if questionnaire.get('transcript') and questionnaire['transcript'].get('pages'):
-            for page in questionnaire['transcript']['pages']:
-                page_name = page.get('name', '').lower()
-                
-                # Nur relevante Seiten durchsuchen
-                if 'kriterien' in page_name or 'rahmenbedingungen' in page_name:
-                    if page.get('prompts'):
-                        for prompt in page['prompts']:
-                            question = prompt.get('question', '')
-                            
-                            # Extrahiere relevante Prioritäten (nicht technische Details)
-                            # Ignoriere: Blacklist, AP, technische Anforderungen
-                            if any(skip in question.lower() for skip in ['blacklist', 'ap:', 'standort:']):
-                                continue
-                            
-                            # Wenn es eine "Zwingend:" Anforderung ist
-                            if 'zwingend:' in question.lower():
-                                # Extrahiere den Teil nach "Zwingend:"
-                                priority = question.split(':', 1)[1].strip() if ':' in question else question
-                                if priority and len(priority) < 100:  # Nur kurze, prägnante Prioritäten
-                                    priorities.append(priority)
-                            
-                            # Arbeitszeitmodelle als Priorität
-                            elif any(keyword in question.lower() for keyword in ['vollzeit', 'teilzeit', 'schicht']):
-                                if len(question) < 100:
-                                    priorities.append(question)
-        
-        # Kombiniere Prioritäten (max. 3-4)
-        if priorities:
-            return ", ".join(priorities[:4])
-        
-        # Fallback: Suche in questions Array
-        if questionnaire.get('questions'):
-            for q in questionnaire['questions']:
-                if q.get('priority') == 1:  # MUSS-Kriterium
-                    question_text = q.get('question', '')
-                    if question_text and len(question_text) < 100:
-                        priorities.append(question_text)
-                        if len(priorities) >= 3:
-                            break
-            
-            if priorities:
-                return ", ".join(priorities)
-        
+    questions = questionnaire.get('questions', [])
+    if not questions:
         return ""
-    except Exception as e:
-        logger.warning(f"⚠️ Fehler beim Extrahieren der Prioritäten: {e}")
-        return ""
+    
+    return extract_variable_with_ai(questions, "companypriorities")
 
 
 def build_questions_list(questionnaire: dict) -> str:
@@ -420,6 +513,8 @@ def extract_dynamic_variables(questionnaire: dict, company_name: str, first_name
     Extrahiert alle Dynamic Variables aus dem HOC Questionnaire
     für ElevenLabs Dashboard-Workflows
     
+    NUTZT AI (GPT-4o-mini) für intelligente Extraktion aus questions Array
+    
     Args:
         questionnaire: Questionnaire-Daten aus HOC
         company_name: Firmenname
@@ -429,7 +524,7 @@ def extract_dynamic_variables(questionnaire: dict, company_name: str, first_name
     Returns:
         Dict mit allen Dynamic Variables für ElevenLabs
     """
-    logger.info("🔍 Extrahiere Dynamic Variables aus Questionnaire...")
+    logger.info("🔍 Extrahiere Dynamic Variables aus Questionnaire (AI-basiert)...")
     
     # BASIS-VARIABLEN (immer vorhanden)
     variables = {
@@ -438,11 +533,24 @@ def extract_dynamic_variables(questionnaire: dict, company_name: str, first_name
         "companyname": company_name
     }
     
-    # EXTRAHIERE VARIABLEN
-    variables["companysize"] = extract_company_size(questionnaire)
-    variables["companypitch"] = extract_company_pitch(questionnaire)
-    variables["campaignlocation_label"] = extract_location(questionnaire)
-    variables["companypriorities"] = extract_priorities(questionnaire)
+    # Hole questions Array
+    questions = questionnaire.get('questions', [])
+    
+    # AI-BASIERTE EXTRAKTION
+    if questions:
+        logger.info(f"📊 {len(questions)} Fragen gefunden - starte AI-Extraktion...")
+        
+        # Extrahiere mit AI (parallel möglich, aber sequential für Einfachheit)
+        variables["campaignlocation_label"] = extract_with_ai(questions, "campaignlocation_label")
+        variables["companypriorities"] = extract_with_ai(questions, "companypriorities")
+        variables["companysize"] = extract_with_ai(questions, "companysize")
+        variables["companypitch"] = extract_with_ai(questions, "companypitch")
+    else:
+        logger.warning("⚠️ Keine Fragen im Questionnaire - AI-Extraktion übersprungen")
+        variables["campaignlocation_label"] = ""
+        variables["companypriorities"] = ""
+        variables["companysize"] = ""
+        variables["companypitch"] = ""
     
     # CAMPAIGN-METADATEN (falls vorhanden)
     variables["campaignrole_title"] = questionnaire.get('campaignrole_title', '') or questionnaire.get('job_title', '') or 'Ihre Position'
