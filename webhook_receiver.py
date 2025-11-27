@@ -469,6 +469,7 @@ def extract_priorities(questionnaire: dict) -> str:
 def build_questions_list(questionnaire: dict) -> str:
     """
     Erstellt strukturierte Fragenliste für Phase 3 (Dashboard)
+    ALLE Fragen kombiniert
     
     Args:
         questionnaire: Questionnaire-Daten aus HOC
@@ -477,7 +478,7 @@ def build_questions_list(questionnaire: dict) -> str:
         Formatierte Fragenliste als String
     """
     try:
-        questions_text = "=== FRAGEN FÜR PHASE 3 ===\n\n"
+        questions_text = "=== ALLE FRAGEN (Überblick) ===\n\n"
         
         if questionnaire.get('questions'):
             questions = questionnaire['questions']
@@ -487,7 +488,7 @@ def build_questions_list(questionnaire: dict) -> str:
             optional_questions = [q for q in questions if q.get('priority') == 2]
             
             if must_questions:
-                questions_text += "MUSS-FRAGEN:\n"
+                questions_text += "MUSS-FRAGEN (Priority 1):\n"
                 for i, q in enumerate(must_questions, 1):
                     question_text = q.get('question', '')
                     context = q.get('context', '')
@@ -497,7 +498,7 @@ def build_questions_list(questionnaire: dict) -> str:
                 questions_text += "\n"
             
             if optional_questions:
-                questions_text += "ZUSÄTZLICHE FRAGEN:\n"
+                questions_text += "ZUSÄTZLICHE FRAGEN (Priority 2):\n"
                 for i, q in enumerate(optional_questions, 1):
                     question_text = q.get('question', '')
                     questions_text += f"{i}. {question_text}\n"
@@ -505,6 +506,111 @@ def build_questions_list(questionnaire: dict) -> str:
         return questions_text
     except Exception as e:
         logger.warning(f"⚠️ Fehler beim Erstellen der Fragenliste: {e}")
+        return ""
+
+
+def build_gate_questions(questionnaire: dict) -> str:
+    """
+    Erstellt Liste der MUSS-Fragen (Priority=1) für Phase 1 (Gate)
+    
+    Args:
+        questionnaire: Questionnaire-Daten aus HOC
+        
+    Returns:
+        Formatierte Liste nur der Priority=1 Fragen
+    """
+    try:
+        gate_text = "=== MUSS-KRITERIEN (Gate) für Phase 1 ===\n\n"
+        gate_text += "Diese Fragen MÜSSEN in Phase 1 gestellt werden.\n"
+        gate_text += "Bei Nichterfüllung: Gespräch beenden!\n\n"
+        
+        if questionnaire.get('questions'):
+            questions = questionnaire['questions']
+            
+            # Nur Priority=1 Fragen
+            must_questions = [q for q in questions if q.get('priority') == 1]
+            
+            if must_questions:
+                for i, q in enumerate(must_questions, 1):
+                    question_text = q.get('question', '')
+                    question_type = q.get('question_type', 'boolean').upper()
+                    context = q.get('context', '')
+                    preamble = q.get('preamble', '')
+                    
+                    gate_text += f"{i}. [{question_type}] {question_text}\n"
+                    
+                    if context:
+                        gate_text += f"   → Kontext: {context}\n"
+                    if preamble:
+                        gate_text += f"   → Preamble: \"{preamble}\"\n"
+                    
+                    gate_text += "\n"
+                
+                gate_text += "⚠️ BEI NICHTERFÜLLUNG:\n"
+                gate_text += "\"Vielen Dank für Ihre Offenheit. Für diese Position ist [Kriterium] zwingend erforderlich.\n"
+                gate_text += "Deshalb können wir das Gespräch hier leider nicht fortsetzen. Alles Gute für Ihre weitere Suche.\"\n"
+            else:
+                gate_text += "(Keine Muss-Kriterien definiert)\n"
+        else:
+            gate_text += "(Keine Fragen vorhanden)\n"
+        
+        logger.info(f"✅ Gate Questions erstellt: {len([q for q in questionnaire.get('questions', []) if q.get('priority') == 1])} Fragen")
+        return gate_text
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Fehler beim Erstellen der Gate Questions: {e}")
+        return ""
+
+
+def build_preference_questions(questionnaire: dict) -> str:
+    """
+    Erstellt Liste der Präferenz-Fragen (Priority=2) für Phase 3
+    
+    Args:
+        questionnaire: Questionnaire-Daten aus HOC
+        
+    Returns:
+        Formatierte Liste nur der Priority=2 Fragen
+    """
+    try:
+        pref_text = "=== PRÄFERENZEN & WÜNSCHE für Phase 3 ===\n\n"
+        pref_text += "Diese Fragen werden in Phase 3 gestellt.\n"
+        pref_text += "Nutze Preamble als Einleitung, falls vorhanden!\n\n"
+        
+        if questionnaire.get('questions'):
+            questions = questionnaire['questions']
+            
+            # Nur Priority=2 Fragen
+            optional_questions = [q for q in questions if q.get('priority') == 2]
+            
+            if optional_questions:
+                for i, q in enumerate(optional_questions, 1):
+                    question_text = q.get('question', '')
+                    question_type = q.get('question_type', 'boolean').upper()
+                    preamble = q.get('preamble', '')
+                    help_text = q.get('help_text', '')
+                    options = q.get('options', None)
+                    
+                    pref_text += f"{i}. [{question_type}] {question_text}\n"
+                    
+                    if preamble:
+                        pref_text += f"   → Preamble: \"{preamble}\" (Nutze als Einleitung!)\n"
+                    if help_text:
+                        pref_text += f"   → Help Text: {help_text}\n"
+                    if options:
+                        pref_text += f"   → Optionen: {options}\n"
+                    
+                    pref_text += "\n"
+            else:
+                pref_text += "(Keine optionalen Fragen definiert)\n"
+        else:
+            pref_text += "(Keine Fragen vorhanden)\n"
+        
+        logger.info(f"✅ Preference Questions erstellt: {len([q for q in questionnaire.get('questions', []) if q.get('priority') == 2])} Fragen")
+        return pref_text
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Fehler beim Erstellen der Preference Questions: {e}")
         return ""
 
 
@@ -558,6 +664,10 @@ def extract_dynamic_variables(questionnaire: dict, company_name: str, first_name
     # KONTEXT-VARIABLEN (strukturiert)
     variables["questionnaire_context"] = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
     variables["questions"] = build_questions_list(questionnaire)
+    
+    # PHASEN-SPEZIFISCHE FRAGEN (NEU!)
+    variables["gate_questions"] = build_gate_questions(questionnaire)  # Phase 1: MUSS-Kriterien
+    variables["preference_questions"] = build_preference_questions(questionnaire)  # Phase 3: Präferenzen
     
     # Log welche Variablen gefüllt wurden
     filled_vars = [k for k, v in variables.items() if v]
