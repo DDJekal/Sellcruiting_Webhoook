@@ -113,6 +113,28 @@ Analysiere diese Recruiting-Fragen und erstelle einen KURZEN COMPANY PITCH (1-2 
 
 Erstelle basierend auf erkennbaren Informationen (Branche, Besonderheiten, Benefits) einen professionellen Pitch.
 Falls zu wenig Information verfügbar: Antworte mit einem leeren String
+""",
+        
+        "campaignrole_title": f"""
+Analysiere diese Recruiting-Fragen und extrahiere die BERUFSBEZEICHNUNG/JOBTITEL:
+
+{questions_text}
+
+Suche nach Hinweisen auf:
+- Berufsbezeichnung (z.B. "Pflegefachkraft", "Erzieher", "Leitungskraft")
+- Position/Rolle (z.B. "Wohnbereichsleitung", "Kitaleitung")
+- Fachrichtung (z.B. "Sozialpädagoge", "Gesundheits- und Krankenpfleger")
+
+WICHTIG:
+- Gib NUR die Berufsbezeichnung zurück (z.B. "Pflegefachkraft" oder "Kitaleitung")
+- KEINE Artikel (nicht "die Pflegefachkraft", sondern "Pflegefachkraft")
+- Falls mehrere Berufe erkennbar: Wähle den Hauptberuf
+- Falls kein Jobtitel erkennbar: Antworte mit "Fachkraft"
+
+Beispiele:
+- Fragen über "staatlich anerkannter Erzieher" → "Erzieher"
+- Fragen über "Wohnbereichsleitung" → "Wohnbereichsleitung"
+- Fragen über "Pflegefachkraft" → "Pflegefachkraft"
 """
     }
     
@@ -651,15 +673,14 @@ def extract_dynamic_variables(questionnaire: dict, company_name: str, first_name
         variables["companypriorities"] = extract_with_ai(questions, "companypriorities")
         variables["companysize"] = extract_with_ai(questions, "companysize")
         variables["companypitch"] = extract_with_ai(questions, "companypitch")
+        variables["campaignrole_title"] = extract_with_ai(questions, "campaignrole_title")  # NEU: AI-Extraktion für Job-Titel
     else:
         logger.warning("⚠️ Keine Fragen im Questionnaire - AI-Extraktion übersprungen")
         variables["campaignlocation_label"] = ""
         variables["companypriorities"] = ""
         variables["companysize"] = ""
         variables["companypitch"] = ""
-    
-    # CAMPAIGN-METADATEN (falls vorhanden)
-    variables["campaignrole_title"] = questionnaire.get('campaignrole_title', '') or questionnaire.get('job_title', '') or 'Ihre Position'
+        variables["campaignrole_title"] = "Ihre Position"  # Fallback
     
     # KONTEXT-VARIABLEN (strukturiert)
     variables["questionnaire_context"] = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
