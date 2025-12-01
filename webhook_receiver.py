@@ -223,9 +223,70 @@ def require_api_key(f):
     return decorated_function
 
 
+def parse_json_response(response_text: str) -> dict:
+    """
+    Transformiert und validiert JSON-Response von HOC API
+    
+    Handhabt verschiedene Response-Formate:
+    - Reines JSON
+    - JSON in HTML eingebettet
+    - Text mit JSON-Inhalt
+    
+    Args:
+        response_text: Roher Response-Text von HOC API
+        
+    Returns:
+        Parsed JSON als dict oder leeres dict bei Fehler
+    """
+    import re
+    
+    if not response_text or not response_text.strip():
+        logger.warning("⚠️  Leere Response von HOC API")
+        return {}
+    
+    # Versuche direktes JSON-Parsing
+    try:
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        pass
+    
+    # Versuche JSON aus HTML zu extrahieren
+    # Suche nach <script> Tags mit JSON
+    script_pattern = r'<script[^>]*>.*?(\{.*?\}).*?</script>'
+    matches = re.findall(script_pattern, response_text, re.DOTALL | re.IGNORECASE)
+    for match in matches:
+        try:
+            return json.loads(match)
+        except json.JSONDecodeError:
+            continue
+    
+    # Entferne HTML-Tags und versuche erneut
+    cleaned = re.sub(r'<[^>]+>', '', response_text)
+    cleaned = cleaned.strip()
+    
+    # Suche nach JSON-Objekt im Text
+    json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+    json_matches = re.findall(json_pattern, cleaned, re.DOTALL)
+    
+    for json_str in json_matches:
+        try:
+            parsed = json.loads(json_str)
+            if isinstance(parsed, dict) and 'questions' in parsed:
+                logger.info("✅ JSON aus bereinigter Response extrahiert")
+                return parsed
+        except json.JSONDecodeError:
+            continue
+    
+    logger.error(f"❌ Konnte kein gültiges JSON aus Response extrahieren")
+    logger.debug(f"Response Preview: {response_text[:200]}...")
+    return {}
+
+
 def fetch_questionnaire_context(campaign_id: int) -> dict:
     """
     Holt Questionnaire/Kontextdatei aus HOC basierend auf Campaign-ID
+    
+    Mit robuster JSON-Transformation und Validierung
     
     Args:
         campaign_id: Campaign ID für den Fragebogen
@@ -248,14 +309,53 @@ def fetch_questionnaire_context(campaign_id: int) -> dict:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         
-        questionnaire = response.json()
-        logger.info(f"✅ Questionnaire erfolgreich geladen für Campaign: {campaign_id}")
+        # ✅ NEU: Prüfe Content-Type
+        content_type = response.headers.get('Content-Type', '')
+        logger.info(f"📋 Content-Type: {content_type}")
+        
+        # ✅ NEU: Verwende JSON-Transformator
+        questionnaire = parse_json_response(response.text)
+        
+        # ✅ NEU: Validierung der Struktur
+        if not isinstance(questionnaire, dict):
+            logger.error(f"❌ Questionnaire ist kein Dict! Type: {type(questionnaire)}")
+            logger.error(f"   Response Preview: {response.text[:200]}...")
+            return {}
+        
+        # ✅ NEU: Prüfe ob questions vorhanden
+        questions = questionnaire.get('questions', [])
+        if not questions:
+            logger.warning(f"⚠️  Campaign {campaign_id}: 'questions' Array ist leer oder fehlt!")
+            logger.warning(f"   Verfügbare Keys: {list(questionnaire.keys())}")
+            logger.warning(f"   Content-Type war: {content_type}")
+        else:
+            logger.info(f"✅ Questionnaire erfolgreich geladen für Campaign: {campaign_id}")
+            logger.info(f"   📊 {len(questions)} Fragen gefunden")
+            
+            # Zeige Priority-Verteilung
+            priority_1 = len([q for q in questions if q.get('priority') == 1])
+            priority_2 = len([q for q in questions if q.get('priority') == 2])
+            logger.info(f"   📋 Priority 1: {priority_1}, Priority 2: {priority_2}")
         
         return questionnaire
         
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"❌ HTTP Fehler beim Laden des Questionnaires (Campaign {campaign_id}): {e}")
+        if e.response:
+            logger.error(f"   Status Code: {e.response.status_code}")
+            logger.error(f"   Response: {e.response.text[:200]}")
+        return {}
     except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Fehler beim Laden des Questionnaires: {e}")
-        # Gib leeres Dict zurück, damit Call trotzdem funktioniert
+        logger.error(f"❌ Fehler beim Laden des Questionnaires (Campaign {campaign_id}): {e}")
+        return {}
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ JSON Parse Fehler (Campaign {campaign_id}): {e}")
+        logger.error(f"   Response Preview: {response.text[:200] if 'response' in locals() else 'N/A'}...")
+        return {}
+    except Exception as e:
+        logger.error(f"❌ Unerwarteter Fehler beim Laden des Questionnaires (Campaign {campaign_id}): {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return {}
 
 
@@ -333,10 +433,8 @@ def extract_variable_with_ai(questions: list, variable_name: str) -> str:
         Extrahierter Wert als String oder "" falls nicht extrahierbar
     """
     try:
-        # Setze OpenAI API Key
-        openai.api_key = Config.OPENAI_API_KEY
-        
-        if not openai.api_key:
+        # Prüfe OpenAI API Key
+        if not Config.OPENAI_API_KEY:
             logger.warning("⚠️ OpenAI API Key nicht konfiguriert - AI-Extraktion übersprungen")
             return ""
         
@@ -412,8 +510,8 @@ Falls zu wenig Information erkennbar: Antworte mit einem leeren String."""
         
         logger.info(f"🤖 Starte AI-Extraktion für: {variable_name}")
         
-        # OpenAI API Call
-        response = openai.ChatCompletion.create(
+        # OpenAI API Call (neue SDK Syntax)
+        response = openai_client.chat.completions.create(
             model="gpt-4o-mini",  # Schnell & günstig (~$0.15/1M tokens)
             messages=[
                 {"role": "system", "content": "Du bist ein Experte für Recruiting-Datenextraktion. Antworte präzise, kurz und ohne Erklärungen."},
@@ -665,7 +763,7 @@ def extract_dynamic_variables(questionnaire: dict, company_name: str, first_name
     questions = questionnaire.get('questions', [])
     
     # AI-BASIERTE EXTRAKTION
-    if questions:
+    if questions and len(questions) > 0:
         logger.info(f"📊 {len(questions)} Fragen gefunden - starte AI-Extraktion...")
         
         # Extrahiere mit AI (parallel möglich, aber sequential für Einfachheit)
@@ -675,7 +773,16 @@ def extract_dynamic_variables(questionnaire: dict, company_name: str, first_name
         variables["companypitch"] = extract_with_ai(questions, "companypitch")
         variables["campaignrole_title"] = extract_with_ai(questions, "campaignrole_title")  # NEU: AI-Extraktion für Job-Titel
     else:
-        logger.warning("⚠️ Keine Fragen im Questionnaire - AI-Extraktion übersprungen")
+        # ✅ WICHTIG: Keine Fragen im Questionnaire
+        logger.warning("⚠️  Keine Fragen im Questionnaire - AI-Extraktion übersprungen")
+        if questionnaire:
+            logger.warning(f"   Questionnaire-Struktur: {list(questionnaire.keys())}")
+            logger.warning(f"   'questions' Array: {questions if questions else 'leer oder fehlt'}")
+            logger.warning(f"   → Campaign hat möglicherweise keine Fragen im HOC System konfiguriert")
+        else:
+            logger.warning(f"   → Questionnaire ist komplett leer")
+        
+        # Setze alle auf leere Strings (außer campaignrole_title mit Fallback)
         variables["campaignlocation_label"] = ""
         variables["companypriorities"] = ""
         variables["companysize"] = ""
