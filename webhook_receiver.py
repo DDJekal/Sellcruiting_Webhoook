@@ -52,9 +52,12 @@ def extract_with_ai(questions: list, variable_name: str) -> str:
     if not questions or not Config.OPENAI_API_KEY:
         return ""
     
-    # Formatiere Fragen für AI
+    # Formatiere Fragen für AI (inkl. Preamble und Options für bessere Extraktion)
     questions_text = "\n".join([
-        f"- {q.get('question', '')} (Priority: {q.get('priority', 'N/A')}, Group: {q.get('group', 'N/A')}, Context: {q.get('context', 'N/A')})"
+        f"- Frage: {q.get('question', '')}\n"
+        f"  Preamble: {q.get('preamble', 'N/A')}\n"
+        f"  Options: {q.get('options', 'N/A')}\n"
+        f"  Priority: {q.get('priority', 'N/A')}, Group: {q.get('group', 'N/A')}, Category: {q.get('category', 'N/A')}, Context: {q.get('context', 'N/A')}"
         for q in questions
     ])
     
@@ -66,14 +69,19 @@ Analysiere diese Recruiting-Fragen und extrahiere NUR den ARBEITSORT (Stadt/Stad
 {questions_text}
 
 WICHTIG:
-- Gib NUR die Stadt oder den Stadtteil zurück (z.B. "Berlin-Hellersdorf" oder "München")
+- Prüfe sowohl die FRAGE als auch das PREAMBLE und die OPTIONS
+- Gib NUR die Stadt oder den Stadtteil zurück (z.B. "Berlin", "Gebesee", "München-Schwabing")
 - NICHT die komplette Adresse mit Straße und Hausnummer
-- Falls mehrere Standorte: Wähle den Hauptstandort
+- Falls mehrere Standorte im Preamble/Options: Wähle den ersten oder Hauptstandort
 - Falls kein Standort erkennbar: Antworte mit einem leeren String
 
-Beispiel:
+Beispiele:
 Frage: "Unser Standort ist Kita Springmäuse, Stollberger Straße 25-27, 12627 Berlin."
 Antwort: "Berlin"
+
+Frage: "Haben Sie bereits eine Präferenz für einen bestimmten Standort?"
+Preamble: "Unser Klinikum hat drei Standorte: Gebesee, Walschleben und Elxleben."
+Antwort: "Gebesee" (oder "Gebesee, Walschleben, Elxleben" wenn mehrere erwünscht)
 
 Frage: "Der Arbeitsort ist München-Schwabing, Leopoldstraße 50."
 Antwort: "München-Schwabing"
@@ -588,7 +596,7 @@ def extract_priorities(questionnaire: dict) -> str:
 
 def build_questions_list(questionnaire: dict) -> str:
     """
-    Erstellt strukturierte Fragenliste für Phase 3 (Dashboard)
+    Erstellt strukturierte Fragenliste (Dashboard)
     ALLE Fragen kombiniert
     
     Args:
@@ -629,20 +637,54 @@ def build_questions_list(questionnaire: dict) -> str:
         return ""
 
 
+def is_job_title_question(question: dict) -> bool:
+    """
+    Prüft, ob eine Frage eine Stellentitel- oder Alternativtitel-Frage ist
+    
+    Args:
+        question: Frage-Dict aus Questionnaire
+        
+    Returns:
+        True wenn es sich um eine Stellentitel-Frage handelt
+    """
+    question_text = (question.get('question', '') or '').lower()
+    context = (question.get('context', '') or '').lower()
+    group = (question.get('group', '') or '').lower()
+    
+    # Schlüsselwörter, die auf Stellentitel-Fragen hindeuten
+    title_keywords = [
+        'stellentitel', 'stellen-titel', 'job-titel', 'jobtitel',
+        'position', 'rolle', 'beruf', 'berufsbezeichnung',
+        'alternativtitel', 'alternativ-titel', 'alternative position',
+        'alternative rolle', 'alternative stelle'
+    ]
+    
+    # Prüfe ob eines der Schlüsselwörter im Frage-Text, Context oder Group vorkommt
+    for keyword in title_keywords:
+        if keyword in question_text or keyword in context or keyword in group:
+            return True
+    
+    return False
+
+
 def build_gate_questions(questionnaire: dict) -> str:
     """
-    Erstellt Liste der MUSS-Fragen (Priority=1) für Phase 1 (Gate)
+    Erstellt Liste der MUSS-Fragen (Priority=1) für Phase 2 (Gate)
+    
+    WICHTIG: Nur Stellentitel/Alternativtitel-Fragen führen zum Abbruch!
+    Andere Muss-Kriterien sind wichtig, aber nicht zwingend.
     
     Args:
         questionnaire: Questionnaire-Daten aus HOC
         
     Returns:
-        Formatierte Liste nur der Priority=1 Fragen
+        Formatierte Liste nur der Priority=1 Fragen (Stellentitel zuerst!)
     """
     try:
-        gate_text = "=== MUSS-KRITERIEN (Gate) für Phase 1 ===\n\n"
-        gate_text += "Diese Fragen MÜSSEN in Phase 1 gestellt werden.\n"
-        gate_text += "Bei Nichterfüllung: Gespräch beenden!\n\n"
+        gate_text = "=== MUSS-KRITERIEN (Gate) für Phase 2 ===\n\n"
+        gate_text += "Diese Fragen MÜSSEN in Phase 2 gestellt werden.\n"
+        gate_text += "⚠️ WICHTIG: Nur Stellentitel/Alternativtitel-Fragen führen bei Nichterfüllung zum Abbruch!\n"
+        gate_text += "Andere Muss-Kriterien sind wichtig, aber nicht zwingend.\n\n"
         
         if questionnaire.get('questions'):
             questions = questionnaire['questions']
@@ -651,30 +693,65 @@ def build_gate_questions(questionnaire: dict) -> str:
             must_questions = [q for q in questions if q.get('priority') == 1]
             
             if must_questions:
-                for i, q in enumerate(must_questions, 1):
-                    question_text = q.get('question', '')
-                    question_type = q.get('question_type', 'boolean').upper()
-                    context = q.get('context', '')
-                    preamble = q.get('preamble', '')
-                    
-                    gate_text += f"{i}. [{question_type}] {question_text}\n"
-                    
-                    if context:
-                        gate_text += f"   → Kontext: {context}\n"
-                    if preamble:
-                        gate_text += f"   → Preamble: \"{preamble}\"\n"
-                    
-                    gate_text += "\n"
+                # Trenne Stellentitel-Fragen von anderen Muss-Kriterien
+                job_title_questions = []
+                other_must_questions = []
                 
-                gate_text += "⚠️ BEI NICHTERFÜLLUNG:\n"
-                gate_text += "\"Vielen Dank für Ihre Offenheit. Für diese Position ist [Kriterium] zwingend erforderlich.\n"
-                gate_text += "Deshalb können wir das Gespräch hier leider nicht fortsetzen. Alles Gute für Ihre weitere Suche.\"\n"
+                for q in must_questions:
+                    if is_job_title_question(q):
+                        job_title_questions.append(q)
+                    else:
+                        other_must_questions.append(q)
+                
+                # Stellentitel-Fragen ZUERST (kritisch - führen zum Abbruch)
+                if job_title_questions:
+                    gate_text += "🔴 KRITISCHE FRAGEN (führen bei Nichterfüllung zum Abbruch):\n\n"
+                    for i, q in enumerate(job_title_questions, 1):
+                        question_text = q.get('question', '')
+                        question_type = q.get('question_type', 'boolean').upper()
+                        context = q.get('context', '')
+                        preamble = q.get('preamble', '')
+                        
+                        gate_text += f"{i}. [{question_type}] {question_text}\n"
+                        gate_text += "   ⚠️ KRITISCH: Bei Nichterfüllung → Gespräch beenden!\n"
+                        
+                        if context:
+                            gate_text += f"   → Kontext: {context}\n"
+                        if preamble:
+                            gate_text += f"   → Preamble: \"{preamble}\"\n"
+                        
+                        gate_text += "\n"
+                    
+                    gate_text += "⚠️ BEI NICHTERFÜLLUNG VON STELLENTITEL/ALTERNATIVTITEL:\n"
+                    gate_text += "\"Vielen Dank für Ihre Offenheit. Leider passt Ihre Qualifikation nicht zu den verfügbaren Positionen.\n"
+                    gate_text += "Deshalb können wir das Gespräch hier leider nicht fortsetzen. Vielen Dank für Ihr Interesse und alles Gute für Ihre weitere Suche.\"\n\n"
+                
+                # Andere Muss-Kriterien (wichtig, aber nicht zwingend)
+                if other_must_questions:
+                    gate_text += "🟡 WICHTIGE FRAGEN (sollten erfüllt sein, führen aber NICHT zum Abbruch):\n\n"
+                    for i, q in enumerate(other_must_questions, 1):
+                        question_text = q.get('question', '')
+                        question_type = q.get('question_type', 'boolean').upper()
+                        context = q.get('context', '')
+                        preamble = q.get('preamble', '')
+                        
+                        gate_text += f"{i}. [{question_type}] {question_text}\n"
+                        gate_text += "   ℹ️ WICHTIG: Sollte erfüllt sein, aber kein Abbruch-Grund\n"
+                        
+                        if context:
+                            gate_text += f"   → Kontext: {context}\n"
+                        if preamble:
+                            gate_text += f"   → Preamble: \"{preamble}\"\n"
+                        
+                        gate_text += "\n"
             else:
                 gate_text += "(Keine Muss-Kriterien definiert)\n"
         else:
             gate_text += "(Keine Fragen vorhanden)\n"
         
-        logger.info(f"✅ Gate Questions erstellt: {len([q for q in questionnaire.get('questions', []) if q.get('priority') == 1])} Fragen")
+        total_must = len([q for q in questionnaire.get('questions', []) if q.get('priority') == 1])
+        job_title_count = len([q for q in questionnaire.get('questions', []) if q.get('priority') == 1 and is_job_title_question(q)])
+        logger.info(f"✅ Gate Questions erstellt: {total_must} Muss-Kriterien ({job_title_count} Stellentitel-Fragen, {total_must - job_title_count} andere)")
         return gate_text
         
     except Exception as e:
@@ -684,7 +761,7 @@ def build_gate_questions(questionnaire: dict) -> str:
 
 def build_preference_questions(questionnaire: dict) -> str:
     """
-    Erstellt Liste der Präferenz-Fragen (Priority=2) für Phase 3
+    Erstellt Liste der Präferenz-Fragen (Priority=2) für Phase 4
     
     Args:
         questionnaire: Questionnaire-Daten aus HOC
@@ -693,8 +770,8 @@ def build_preference_questions(questionnaire: dict) -> str:
         Formatierte Liste nur der Priority=2 Fragen
     """
     try:
-        pref_text = "=== PRÄFERENZEN & WÜNSCHE für Phase 3 ===\n\n"
-        pref_text += "Diese Fragen werden in Phase 3 gestellt.\n"
+        pref_text = "=== PRÄFERENZEN & WÜNSCHE für Phase 4 ===\n\n"
+        pref_text += "Diese Fragen werden in Phase 4 gestellt.\n"
         pref_text += "Nutze Preamble als Einleitung, falls vorhanden!\n\n"
         
         if questionnaire.get('questions'):
@@ -794,8 +871,8 @@ def extract_dynamic_variables(questionnaire: dict, company_name: str, first_name
     variables["questions"] = build_questions_list(questionnaire)
     
     # PHASEN-SPEZIFISCHE FRAGEN (NEU!)
-    variables["gate_questions"] = build_gate_questions(questionnaire)  # Phase 1: MUSS-Kriterien
-    variables["preference_questions"] = build_preference_questions(questionnaire)  # Phase 3: Präferenzen
+    variables["gate_questions"] = build_gate_questions(questionnaire)  # Phase 2: MUSS-Kriterien (nur Stellentitel führen zum Abbruch)
+    variables["preference_questions"] = build_preference_questions(questionnaire)  # Phase 4: Präferenzen
     
     # Log welche Variablen gefüllt wurden
     filled_vars = [k for k, v in variables.items() if v]
