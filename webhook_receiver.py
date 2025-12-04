@@ -37,6 +37,89 @@ client = ElevenLabs(
 openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
 
 
+def make_gender_neutral_job_title(job_title: str) -> str:
+    """
+    Konvertiert Job-Titel zu geschlechterneutralen Begriffen
+    
+    Args:
+        job_title: Job-Titel mit möglicherweise geschlechtsspezifischen Endungen
+        
+    Returns:
+        Geschlechterneutraler Job-Titel
+    """
+    if not job_title:
+        return ""
+    
+    job_title = job_title.strip()
+    
+    # Mapping für geschlechtsspezifische zu neutralen Begriffen
+    gender_neutral_mapping = {
+        # Pflege
+        "pflegefachfrau/-mann": "Pflegefachkraft",
+        "pflegefachfrau/-mann": "Pflegefachkraft",
+        "pflegefachfrau": "Pflegefachkraft",
+        "pflegefachmann": "Pflegefachkraft",
+        "krankenschwester": "Pflegefachkraft",
+        "krankenpfleger": "Pflegefachkraft",
+        "krankenschwester/-pfleger": "Pflegefachkraft",
+        "krankenpfleger/in": "Pflegefachkraft",
+        "gesundheits- und krankenpfleger/in": "Pflegefachkraft",
+        "gesundheits- und krankenpfleger": "Pflegefachkraft",
+        
+        # Erziehung
+        "erzieher/in": "Erzieher",
+        "erzieher*in": "Erzieher",
+        "erzieher:in": "Erzieher",
+        "erzieherin": "Erzieher",
+        
+        # Sozialpädagogik
+        "sozialpädagoge/in": "Sozialpädagogische Fachkraft",
+        "sozialpädagogin": "Sozialpädagogische Fachkraft",
+        "sozialpädagoge": "Sozialpädagogische Fachkraft",
+        
+        # Medizinische Fachangestellte
+        "arzthelfer/in": "Medizinische Fachangestellte",
+        "arzthelferin": "Medizinische Fachangestellte",
+        "arzthelfer": "Medizinische Fachangestellte",
+        "mfa": "Medizinische Fachangestellte",
+        
+        # Leitung
+        "leitungsfachkraft": "Leitungskraft",
+        "leitungsfachfrau/-mann": "Leitungskraft",
+    }
+    
+    # Prüfe exakte Übereinstimmungen (case-insensitive)
+    job_lower = job_title.lower()
+    for gendered, neutral in gender_neutral_mapping.items():
+        if gendered in job_lower or job_lower == gendered:
+            return neutral
+    
+    # Entferne geschlechtsspezifische Endungen mit Regex
+    import re
+    
+    # Entferne -frau/-mann, -frau/-mann, /in, *in, :in
+    result = re.sub(r'[-/]\s*(frau|mann|in)', '', job_title, flags=re.IGNORECASE)
+    result = re.sub(r'[*:]\s*in', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'\(frau/-mann\)', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'\(-frau/-mann\)', '', result, flags=re.IGNORECASE)
+    
+    # Entferne geschlechtsspezifische Endungen am Ende
+    result = re.sub(r'frau$', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'mann$', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'in$', '', result, flags=re.IGNORECASE)
+    
+    # Bereinige doppelte Leerzeichen und Bindestriche
+    result = re.sub(r'\s+', ' ', result)
+    result = re.sub(r'-\s*-', '-', result)
+    result = result.strip(' -')
+    
+    # Falls leer geworden, verwende Fallback
+    if not result:
+        return "Fachkraft"
+    
+    return result
+
+
 def extract_with_ai(questions: list, variable_name: str) -> str:
     """
     Nutzt OpenAI GPT-4o-mini, um eine Dynamic Variable aus Fragen zu extrahieren
@@ -133,16 +216,28 @@ Suche nach Hinweisen auf:
 - Position/Rolle (z.B. "Wohnbereichsleitung", "Kitaleitung")
 - Fachrichtung (z.B. "Sozialpädagoge", "Gesundheits- und Krankenpfleger")
 
+WICHTIG - GESCHLECHTERNEUTRAL:
+- Verwende IMMER geschlechterneutrale Begriffe
+- "Pflegefachfrau/-mann" oder "Pflegefachfrau/-mann" → "Pflegefachkraft"
+- "Erzieher/in" oder "Erzieher*in" → "Erzieher" (bereits neutral)
+- "Sozialpädagoge/in" → "Sozialpädagogische Fachkraft" oder "Sozialpädagoge"
+- "Krankenpfleger/in" → "Pflegefachkraft"
+- "Krankenschwester/-pfleger" → "Pflegefachkraft"
+- "Arzthelfer/in" → "Medizinische Fachangestellte" oder "MFA"
+- Falls bereits neutral (z.B. "Erzieher", "Leitungskraft"): Verwende wie vorhanden
+
 WICHTIG:
 - Gib NUR die Berufsbezeichnung zurück (z.B. "Pflegefachkraft" oder "Kitaleitung")
 - KEINE Artikel (nicht "die Pflegefachkraft", sondern "Pflegefachkraft")
+- KEINE geschlechtsspezifischen Endungen (-frau, -mann, -in)
 - Falls mehrere Berufe erkennbar: Wähle den Hauptberuf
 - Falls kein Jobtitel erkennbar: Antworte mit "Fachkraft"
 
 Beispiele:
-- Fragen über "staatlich anerkannter Erzieher" → "Erzieher"
-- Fragen über "Wohnbereichsleitung" → "Wohnbereichsleitung"
-- Fragen über "Pflegefachkraft" → "Pflegefachkraft"
+- Fragen über "staatlich anerkannter Erzieher" → "Erzieher" (bereits neutral)
+- Fragen über "Pflegefachfrau/-mann" → "Pflegefachkraft"
+- Fragen über "Wohnbereichsleitung" → "Wohnbereichsleitung" (bereits neutral)
+- Fragen über "Krankenschwester" → "Pflegefachkraft"
 """
     }
     
@@ -169,6 +264,13 @@ Beispiele:
         
         # Entferne Anführungszeichen falls vorhanden
         result = result.strip('"').strip("'")
+        
+        # Spezielle Nachbearbeitung für campaignrole_title: Geschlechterneutral machen
+        if variable_name == "campaignrole_title" and result:
+            original = result
+            result = make_gender_neutral_job_title(result)
+            if original != result:
+                logger.info(f"🔄 Geschlechterneutralisierung: '{original}' → '{result}'")
         
         logger.info(f"✅ AI-Extraktion für {variable_name}: {result[:50]}...")
         return result
@@ -303,6 +405,17 @@ def fetch_questionnaire_context(campaign_id: int) -> dict:
         dict mit Questionnaire-Daten und Kontext
     """
     try:
+        # ✅ NEU: Prüfe ob API Key gesetzt ist
+        if not Config.HIRINGS_API_TOKEN:
+            logger.error(f"❌ HIRINGS_API_TOKEN ist nicht gesetzt!")
+            logger.error(f"   → Bitte setze HIRINGS_API_TOKEN in der .env Datei")
+            return {}
+        
+        if not Config.HIRINGS_API_URL:
+            logger.error(f"❌ HIRINGS_API_URL ist nicht gesetzt!")
+            logger.error(f"   → Bitte setze HIRINGS_API_URL in der .env Datei")
+            return {}
+        
         headers = {
             "Authorization": Config.HIRINGS_API_TOKEN,  # ⚠️ OHNE "Bearer" - HOC API benötigt direkten Token!
             "Content-Type": "application/json"
@@ -313,8 +426,25 @@ def fetch_questionnaire_context(campaign_id: int) -> dict:
         url = f"{Config.HIRINGS_API_URL}/questionnaire/{campaign_id}"
         
         logger.info(f"📥 Lade Questionnaire von HOC: {url}")
+        logger.info(f"   API Token vorhanden: {'Ja' if Config.HIRINGS_API_TOKEN else 'Nein'} ({len(Config.HIRINGS_API_TOKEN) if Config.HIRINGS_API_TOKEN else 0} Zeichen)")
         
         response = requests.get(url, headers=headers, timeout=10)
+        
+        # ✅ NEU: Prüfe Status Code vor raise_for_status
+        if response.status_code == 401:
+            logger.error(f"❌ UNAUTHORIZED (401) - API Key ist falsch oder ungültig!")
+            logger.error(f"   → Prüfe deinen HIRINGS_API_TOKEN in der .env Datei")
+            logger.error(f"   → Response: {response.text[:200]}")
+            return {}
+        elif response.status_code == 403:
+            logger.error(f"❌ FORBIDDEN (403) - API Key hat keine Berechtigung für diese Kampagne!")
+            logger.error(f"   → Response: {response.text[:200]}")
+            return {}
+        elif response.status_code == 404:
+            logger.warning(f"⚠️  NOT FOUND (404) - Kampagne {campaign_id} existiert nicht in HOC!")
+            logger.warning(f"   → Response: {response.text[:200]}")
+            return {}
+        
         response.raise_for_status()
         
         # ✅ NEU: Prüfe Content-Type
@@ -392,7 +522,8 @@ def build_first_message(company_name: str, first_name: str, last_name: str, camp
 def build_enhanced_prompt(questionnaire: dict, company_name: str, first_name: str, last_name: str) -> str:
     """
     Erstellt erweiterten System-Prompt mit Questionnaire-Kontext
-    Lädt Dashboard-Prompt und ergänzt ihn mit Kontext-Daten
+    WICHTIG: Diese Funktion wird nur für WebRTC Links verwendet, nicht für Twilio Outbound Calls!
+    Bei Twilio Outbound Calls wird der Dashboard-Prompt direkt verwendet + Dynamic Variables injiziert.
     
     Args:
         questionnaire: Questionnaire-Daten aus HOC
@@ -404,27 +535,23 @@ def build_enhanced_prompt(questionnaire: dict, company_name: str, first_name: st
         Erweiterter System-Prompt mit vollem Kontext
     """
     
-    # Lade Dashboard-Prompt aus Datei
-    try:
-        with open('dashboard_prompt.txt', 'r', encoding='utf-8') as f:
-            dashboard_prompt = f.read()
-        logger.info("✅ Dashboard-Prompt aus Datei geladen")
-    except FileNotFoundError:
-        logger.warning("⚠️  dashboard_prompt.txt nicht gefunden, nutze Basis-Prompt")
-        dashboard_prompt = f"""Du bist ein professioneller Recruiting-Assistent für {company_name}.
-Du führst ein Gespräch mit {first_name} {last_name}."""
-    
-    # Ersetze NUR Kandidaten-Platzhalter (Rest kommt aus Kontext!)
-    dashboard_prompt = dashboard_prompt.replace('{{candidatefirst_name}}', first_name)
-    dashboard_prompt = dashboard_prompt.replace('{{candidatelast_name}}', last_name)
+    # HINWEIS: dashboard_prompt.txt wird nicht mehr verwendet
+    # Der Dashboard-Prompt wird direkt von ElevenLabs verwendet
+    # Diese Funktion wird nur für WebRTC Links benötigt (falls conversation_config_override verwendet wird)
     
     # Baue Questionnaire-Kontext
     questionnaire_context = build_questionnaire_context(questionnaire, company_name, first_name, last_name)
     
+    # Basis-Prompt (wird nur für WebRTC Links verwendet)
+    dashboard_prompt = f"""Du bist ein professioneller Recruiting-Assistent für {company_name}.
+Du führst ein Gespräch mit {first_name} {last_name}.
+
+Nutze die Informationen aus dem KONTEXT-Abschnitt unten."""
+    
     # FINALER PROMPT: Dashboard-Prompt + Questionnaire-Kontext
     final_prompt = dashboard_prompt + "\n\n" + questionnaire_context
     
-    logger.info(f"📝 Enhanced Prompt erstellt: {len(final_prompt)} Zeichen (Dashboard: {len(dashboard_prompt)}, Kontext: {len(questionnaire_context)})")
+    logger.info(f"📝 Enhanced Prompt erstellt: {len(final_prompt)} Zeichen (Basis: {len(dashboard_prompt)}, Kontext: {len(questionnaire_context)})")
     
     return final_prompt
 
@@ -535,6 +662,13 @@ Falls zu wenig Information erkennbar: Antworte mit einem leeren String."""
         # Bereinige Ergebnis
         if result.lower() in ['', 'nicht vorhanden', 'keine angabe', 'n/a', 'null', 'none']:
             result = ""
+        
+        # Spezielle Nachbearbeitung für campaignrole_title: Geschlechterneutral machen
+        if variable_name == "campaignrole_title" and result:
+            original = result
+            result = make_gender_neutral_job_title(result)
+            if original != result:
+                logger.info(f"🔄 Geschlechterneutralisierung: '{original}' → '{result}'")
         
         logger.info(f"✅ AI-Extraktion für {variable_name}: {result[:100] if result else '(leer)'}...")
         
@@ -1085,31 +1219,9 @@ def trigger_outbound_call():
         if not questionnaire:
             logger.warning(f"⚠️  Kein Questionnaire gefunden, fahre mit Basis-Prompt fort")
         
-        # 2. Baue Enhanced Prompt mit Questionnaire-Kontext
-        enhanced_prompt = override_prompt if override_prompt else build_enhanced_prompt(
-            questionnaire=questionnaire,
-            company_name=company_name,
-            first_name=first_name,
-            last_name=last_name
-        )
-        
-        # 3. Baue personalisierte First Message
-        campaign_location = (
-            questionnaire.get('campaignlocation_label', '') or 
-            questionnaire.get('work_location', '') or 
-            questionnaire.get('location', '') or
-            (f"{questionnaire.get('work_location', '')} {questionnaire.get('work_location_postal_code', '')}".strip())
-        )
-        
-        first_message = build_first_message(
-            company_name=company_name,
-            first_name=first_name,
-            last_name=last_name,
-            campaign_location=campaign_location
-        )
-        
-        logger.info(f"📝 Enhanced Prompt: {len(enhanced_prompt)} Zeichen")
-        logger.info(f"💬 First Message: {first_message}")
+        # HINWEIS: Enhanced Prompt wird NICHT verwendet, da wir nur Dynamic Variables senden
+        # Der Dashboard-Prompt bleibt unverändert und wird direkt von ElevenLabs verwendet
+        # Die Dynamic Variables werden injiziert und ersetzen {{variable_name}} Platzhalter im Dashboard-Prompt
         
         # =================================================================
         # INTELLIGENTER FALLBACK: SIP Trunk vs. WebRTC Link
@@ -1122,7 +1234,7 @@ def trigger_outbound_call():
             logger.info(f"{'='*70}")
             
             try:
-                # ✨ NEU: Extrahiere ALLE Dynamic Variables aus Questionnaire
+                # ✨ Extrahiere ALLE Dynamic Variables aus Questionnaire
                 dynamic_vars = extract_dynamic_variables(questionnaire, company_name, first_name, last_name)
                 
                 logger.info(f"📊 {len(dynamic_vars)} Dynamic Variables extrahiert:")
@@ -1130,15 +1242,25 @@ def trigger_outbound_call():
                     value_preview = str(dynamic_vars[key])[:50] if dynamic_vars[key] else "(leer)"
                     logger.info(f"   • {key}: {value_preview}...")
                 
+                # WICHTIG: Prüfe ob wichtige Variablen vorhanden sind
+                important_vars = ['campaignlocation_label', 'campaignrole_title', 'companypriorities', 'companypitch', 'questionnaire_context']
+                missing_vars = [v for v in important_vars if not dynamic_vars.get(v)]
+                if missing_vars:
+                    logger.warning(f"⚠️  Wichtige Variablen fehlen: {', '.join(missing_vars)}")
+                else:
+                    logger.info(f"✅ Alle wichtigen Variablen vorhanden")
+                
                 # WICHTIG: Nutze twilio.outbound_call mit DIRECT DICT
-                # OPTION A: Nur Dynamic Variables (Dashboard-Workflows werden genutzt!)
+                # Nur Dynamic Variables werden gesendet - Dashboard-Prompt bleibt unverändert!
+                # ElevenLabs ersetzt automatisch {{variable_name}} Platzhalter im Dashboard-Prompt
                 response = client.conversational_ai.twilio.outbound_call(
                     agent_id=Config.ELEVENLABS_AGENT_ID,
                     agent_phone_number_id=agent_phone_number_id,
                     to_number=to_number,
                     conversation_initiation_client_data={
                         "dynamic_variables": dynamic_vars
-                        # KEIN conversation_config_override → Dashboard-Workflows bleiben aktiv!
+                        # KEIN conversation_config_override → Dashboard-Prompt bleibt aktiv!
+                        # ElevenLabs ersetzt {{campaignlocation_label}}, {{campaignrole_title}}, etc. automatisch
                     }
                 )
                 
